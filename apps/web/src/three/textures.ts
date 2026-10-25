@@ -101,6 +101,72 @@ export function makeCarpetTexture(palette: 'dark' | 'light' = 'dark'): THREE.Can
   return texture;
 }
 
+/** Worn concrete venue floor the carpet is laid on. */
+export function makeVenueFloorTexture(): THREE.CanvasTexture {
+  const size = 1024;
+  const ctx = canvas2d(size, size);
+  const gradient = ctx.createLinearGradient(0, 0, size, size);
+  gradient.addColorStop(0, '#7d848b');
+  gradient.addColorStop(0.5, '#72787f');
+  gradient.addColorStop(1, '#666c73');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 22000; i++) {
+    const shade = 66 + Math.random() * 62;
+    ctx.fillStyle = `rgba(${shade},${shade + 2},${shade + 6},${0.04 + Math.random() * 0.16})`;
+    ctx.fillRect(Math.random() * size, Math.random() * size, 2.4, 2.4);
+  }
+  // Slab seams every quarter of the texture.
+  ctx.strokeStyle = 'rgba(40,46,54,.28)';
+  ctx.lineWidth = 3;
+  for (let i = 0; i <= size; i += 256) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, i);
+    ctx.lineTo(size, i);
+    ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(ctx.canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+/** Transparent midfield decal painted straight onto the carpet. */
+export function makeCenterDecal(): THREE.CanvasTexture {
+  const size = 512;
+  const ctx = canvas2d(size, size);
+  const c = size / 2;
+  ctx.clearRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(255,255,255,.5)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.arc(c, c, 216, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,210,63,.8)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(c, c, 198, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.font = '800 92px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.fillText('REBUILT', c, c - 30);
+  ctx.fillStyle = 'rgba(255,210,63,.88)';
+  ctx.font = '700 56px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.fillText('2026', c, c + 52);
+  const texture = new THREE.CanvasTexture(ctx.canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
 export function makeGridTexture(): THREE.CanvasTexture {
   const size = 512;
   const ctx = canvas2d(size, size);

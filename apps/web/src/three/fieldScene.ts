@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { FieldLayout, MatchSetup, MatchSnapshot, RobotSnapshot } from '@rebuilt/shared';
 import { createRobotModel, type RobotVisual } from './robotModel';
-import { makeCarpetTexture, makeTextTexture } from './textures';
+import { makeCarpetTexture, makeCenterDecal, makeTextTexture, makeVenueFloorTexture } from './textures';
 
 export type CameraMode = 'driver' | 'broadcast' | 'field' | 'orbit';
 
@@ -20,6 +20,17 @@ const YELLOW = new THREE.Color('#ffd23f');
 const ALUMINIUM = new THREE.Color('#c2cad4');
 
 const UP = new THREE.Vector3(0, 1, 0);
+
+/** Corners of the carpet: what the broadcast and top cameras frame. */
+function fieldFitPoints(field: FieldLayout): THREE.Vector3[] {
+  const { length: L, width: W } = field.size;
+  return [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(L, 0, 0),
+    new THREE.Vector3(0, 0, W),
+    new THREE.Vector3(L, 0, W),
+  ];
+}
 
 function material(
   color: THREE.ColorRepresentation,
@@ -88,6 +99,9 @@ export class FieldScene {
   private lastFrame = performance.now();
   private elapsed = 0;
   private readonly cameraLook = new THREE.Vector3();
+  private readonly fieldFitPoints: THREE.Vector3[];
+  private readonly fitCamera = new THREE.PerspectiveCamera(46, 16 / 9, 0.05, 400);
+  private readonly projected = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
   private readonly quality: 'high' | 'balanced';
 
@@ -113,10 +127,17 @@ export class FieldScene {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xe6eef7, 42, 96);
-    this.camera = new THREE.PerspectiveCamera(45, (container.clientWidth || 1) / (container.clientHeight || 1), 0.08, 160);
+    this.scene.fog = new THREE.Fog(0xdfe8f2, 58, 150);
+    this.camera = new THREE.PerspectiveCamera(
+      46,
+      (container.clientWidth || 1) / (container.clientHeight || 1),
+      0.08,
+      240,
+    );
     this.camera.position.set(this.field.size.length * 0.82, 8.2, this.field.size.width * 2.35);
     this.cameraLook.set(this.field.size.length * 0.5, 0.6, this.field.size.width * 0.5);
+    this.fieldFitPoints = fieldFitPoints(this.field);
+    this.fitCamera.aspect = this.camera.aspect;
 
     this.addSky();
     this.addLights();
@@ -127,6 +148,7 @@ export class FieldScene {
     this.addOutposts();
     this.addBarriers();
     this.addSetDressing();
+    this.addGrandstand();
     this.addRobots();
 
     const maxFuel = Math.max(48, this.field.fuelSpawns.reduce((n, s) => n + s.count, 0) + 32);
@@ -163,35 +185,99 @@ export class FieldScene {
   }
 
   private addLights(): void {
-    this.scene.add(new THREE.HemisphereLight(0xe9f1fb, 0x9aa2ab, 1.35));
-    const key = new THREE.DirectionalLight(0xfffaf1, 2.1);
-    key.position.set(7, 16, 7);
+    const { length: L, width: W } = this.field.size;
+    const center = new THREE.Vector3(L / 2, 0, W / 2);
+    this.scene.add(new THREE.HemisphereLight(0xeaf2fc, 0x8d949c, 1.05));
+
+    // Key light aimed at the middle of the field so the shadow frustum covers
+    // the whole carpet and the corner structures stay lit.
+    const key = new THREE.DirectionalLight(0xfff6ea, 2.35);
+    key.position.set(center.x + 7, 17, center.z + 9);
+    key.target.position.copy(center);
     key.castShadow = this.quality === 'high';
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.left = -15;
-    key.shadow.camera.right = 15;
-    key.shadow.camera.top = 15;
-    key.shadow.camera.bottom = -15;
+    const span = Math.max(L, W) * 0.82 + 4.5;
+    key.shadow.camera.left = -span;
+    key.shadow.camera.right = span;
+    key.shadow.camera.top = span;
+    key.shadow.camera.bottom = -span;
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 40;
+    key.shadow.camera.far = 60;
     key.shadow.bias = -0.0004;
-    key.shadow.normalBias = 0.03;
+    key.shadow.normalBias = 0.028;
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0xdce8f7, 0.55);
-    fill.position.set(-8, 8, -7);
+    this.scene.add(key.target);
+
+    const fill = new THREE.DirectionalLight(0xd7e6f8, 0.5);
+    fill.position.set(center.x - 9, 8, center.z - 8);
+    fill.target.position.copy(center);
     this.scene.add(fill);
+    this.scene.add(fill.target);
+
+    // Alliance-coloured rims lift the two ends out of the flat grey.
+    const redRim = new THREE.DirectionalLight(0xff5568, 0.42);
+    redRim.position.set(-9, 4.5, W / 2);
+    redRim.target.position.copy(center);
+    this.scene.add(redRim);
+    this.scene.add(redRim.target);
+    const blueRim = new THREE.DirectionalLight(0x4f92ff, 0.42);
+    blueRim.position.set(L + 9, 4.5, W / 2);
+    blueRim.target.position.copy(center);
+    this.scene.add(blueRim);
+    this.scene.add(blueRim.target);
   }
 
   private addArena(): void {
     const { length: L, width: W } = this.field.size;
+    const cx = L / 2;
+    const cz = W / 2;
+
+    // Venue floor: the worn concrete slab the carpet is laid on. It runs well
+    // past the fog line so there is no hard horizon inside the broadcast frame.
+    const floorW = Math.max(160, L + 60);
+    const floorD = Math.max(160, W + 60);
+    const venueTex = makeVenueFloorTexture();
+    venueTex.repeat.set(floorW / 9, floorD / 9);
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(floorW, floorD),
+      new THREE.MeshStandardMaterial({ map: venueTex, roughness: 0.94, metalness: 0.03 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(cx, -0.06, cz);
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+
+    // Painted walkway between the field walls and the safety fence.
     const apron = new THREE.Mesh(
-      new THREE.PlaneGeometry(46, 30),
-      new THREE.MeshStandardMaterial({ color: '#b9bec5', roughness: 0.94, metalness: 0.03 }),
+      new THREE.PlaneGeometry(L + 8.8, W + 8.8),
+      new THREE.MeshStandardMaterial({ color: '#a9b0b8', roughness: 0.9, metalness: 0.04 }),
     );
     apron.rotation.x = -Math.PI / 2;
-    apron.position.set(L / 2, -0.05, W / 2);
+    apron.position.set(cx, -0.028, cz);
     apron.receiveShadow = true;
     this.scene.add(apron);
+
+    const paint = (mat: THREE.Material, x: number, z: number, sx: number, sz: number) => {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(sx, sz), mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, -0.02, z);
+      this.scene.add(mesh);
+    };
+    const hazardMat = new THREE.MeshBasicMaterial({ color: '#efc23f' });
+    const edgeMat = new THREE.MeshBasicMaterial({ color: '#eef3f8' });
+    // Hazard dashes marking the keep-out line around the apron.
+    for (let x = 0.9; x < L + 3.6; x += 1.5) {
+      paint(hazardMat, x, -3.6, 0.72, 0.13);
+      paint(hazardMat, x, W + 3.6, 0.72, 0.13);
+    }
+    for (let z = 0.9; z < W + 3.6; z += 1.5) {
+      paint(hazardMat, -3.6, z, 0.13, 0.72);
+      paint(hazardMat, L + 3.6, z, 0.13, 0.72);
+    }
+    paint(edgeMat, cx, -3.82, L + 5.4, 0.05);
+    paint(edgeMat, cx, W + 3.82, L + 5.4, 0.05);
+    paint(edgeMat, -3.82, cz, 0.05, W + 5.4);
+    paint(edgeMat, L + 3.82, cz, 0.05, W + 5.4);
 
     // Fence line: white safety railing around the field, like the real venue.
     const postMat = material('#eef2f6', { metalness: 0.12, roughness: 0.62 });
@@ -289,6 +375,12 @@ export class FieldScene {
     addWall(-0.07, cz, 0.14, W, redWall);
     addWall(L + 0.07, cz, 0.14, W, blueWall);
 
+    // LED trim inside each alliance wall so the ends still read at distance.
+    const redGlow = new THREE.MeshBasicMaterial({ color: '#ff3149', toneMapped: false });
+    const blueGlow = new THREE.MeshBasicMaterial({ color: '#2f7bff', toneMapped: false });
+    box(this.scene, redGlow, 0.04, 0.05, W - 0.7, 0.03, wallH - 0.15, cz, false);
+    box(this.scene, blueGlow, 0.04, 0.05, W - 0.7, L - 0.03, wallH - 0.15, cz, false);
+
     // Yellow hazard tape along the inside of both sidelines.
     for (let x = 0.55; x < L - 0.4; x += 1.05) {
       box(this.scene, tapeMat, 0.52, 0.1, 0.012, x, 0.16, 0.012, false);
@@ -308,6 +400,19 @@ export class FieldScene {
       }
     }
 
+    // Midfield decal painted onto the carpet.
+    const decal = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.5, 3.5),
+      new THREE.MeshBasicMaterial({
+        map: makeCenterDecal(),
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.88,
+      }),
+    );
+    decal.rotation.x = -Math.PI / 2;
+    decal.position.set(cx, 0.021, cz);
+    this.scene.add(decal);
   }
 
   /**
@@ -641,6 +746,96 @@ export class FieldScene {
     }
   }
 
+  /**
+   * Grandstand behind the far sideline: stepped tiers, a seated crowd and the
+   * event banner wall, so the arena sits in a venue instead of on a grey plane.
+   */
+  private addGrandstand(): void {
+    const { length: L } = this.field.size;
+    const cx = L / 2;
+    const span = L + 7.2;
+    const frontZ = -6.2;
+    const tiers = 4;
+    const tierDepth = 0.92;
+    const tierRise = 0.48;
+    const wallZ = frontZ - tiers * tierDepth - 0.24;
+
+    const stepMat = material('#464f5b', { metalness: 0.16, roughness: 0.66 });
+    const fasciaMat = material('#1b222b', { metalness: 0.35, roughness: 0.5 });
+    const wallMat = material('#121820', { metalness: 0.2, roughness: 0.7 });
+    const railMat = material('#d8dfe7', { metalness: 0.45, roughness: 0.35 });
+
+    for (let tier = 0; tier < tiers; tier++) {
+      const height = tierRise * (tier + 1);
+      const z = frontZ - tier * tierDepth - tierDepth / 2;
+      box(this.scene, stepMat, span, height, tierDepth, cx, height / 2, z);
+    }
+    box(this.scene, fasciaMat, span, 0.86, 0.16, cx, 0.43, frontZ + 0.1);
+    box(
+      this.scene,
+      railMat,
+      span,
+      0.05,
+      0.05,
+      cx,
+      tierRise * tiers + 0.66,
+      frontZ - (tiers - 1) * tierDepth - tierDepth + 0.05,
+      false,
+    );
+
+    // Seated crowd, instanced so a packed stand stays cheap to draw.
+    const seats: Array<{ x: number; y: number; z: number; turn: number }> = [];
+    for (let tier = 0; tier < tiers; tier++) {
+      const y = tierRise * (tier + 1) + 0.31;
+      const z = frontZ - tier * tierDepth - tierDepth / 2 + 0.02;
+      for (let x = -span / 2 + 0.55; x < span / 2 - 0.45; x += 0.62) {
+        if (Math.random() < 0.1) continue;
+        seats.push({
+          x: cx + x + (Math.random() - 0.5) * 0.16,
+          y,
+          z: z + (Math.random() - 0.5) * 0.14,
+          turn: (Math.random() - 0.5) * 0.5,
+        });
+      }
+    }
+    const crowd = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.36, 0.62, 0.34),
+      material('#8d939c', { roughness: 0.86, metalness: 0.02 }),
+      seats.length,
+    );
+    const dummy = new THREE.Object3D();
+    const palette = ['#c8102e', '#0057b8', '#e8edf3', '#2c333d', '#f0c23f', '#6d7683', '#a34b2a', '#3f7d54'];
+    const color = new THREE.Color();
+    seats.forEach((seat, index) => {
+      dummy.position.set(seat.x, seat.y, seat.z);
+      dummy.rotation.set(0, seat.turn, 0);
+      dummy.updateMatrix();
+      crowd.setMatrixAt(index, dummy.matrix);
+      crowd.setColorAt(index, color.set(palette[Math.floor(Math.random() * palette.length)]));
+    });
+    crowd.castShadow = false;
+    crowd.receiveShadow = false;
+    this.scene.add(crowd);
+
+    // Back wall carrying the event banner.
+    box(this.scene, wallMat, span + 1.8, 3.5, 0.3, cx, 1.75, wallZ);
+    const bannerTex = makeTextTexture('REBUILT 2026', {
+      width: 1024,
+      height: 256,
+      background: '#0d1219',
+      color: '#f2f6fb',
+      sub: 'WORLD CHAMPIONSHIP',
+      accent: '#ffd23f',
+      border: true,
+    });
+    const banner = new THREE.Mesh(
+      new THREE.PlaneGeometry(span + 0.6, 1.7),
+      new THREE.MeshBasicMaterial({ map: bannerTex, toneMapped: false }),
+    );
+    banner.position.set(cx, 2.4, wallZ + 0.16);
+    this.scene.add(banner);
+  }
+
   private addRobots(): void {
     for (const robotSetup of this.setup.robots) {
       const visual = createRobotModel(robotSetup.bot, robotSetup.alliance);
@@ -748,14 +943,79 @@ export class FieldScene {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.fitCamera.aspect = width / height;
+    this.fitCamera.updateProjectionMatrix();
+  }
+
+  /**
+   * Broadcast azimuth for the current window shape. Wide screens look almost
+   * straight down the sideline so the long axis spans the width; taller screens
+   * pull round to a corner so the field still reads big.
+   */
+  private broadcastAzimuth(): number {
+    const stops: Array<[number, number]> = [
+      [0.56, 6],
+      [0.75, 18],
+      [1.0, 52],
+      [1.33, 60],
+      [1.78, 76],
+      [2.4, 84],
+    ];
+    const aspect = Math.min(Math.max(this.camera.aspect, stops[0][0]), stops[stops.length - 1][0]);
+    let degrees = stops[stops.length - 1][1];
+    for (let index = 1; index < stops.length; index++) {
+      const [aspect0, deg0] = stops[index - 1];
+      const [aspect1, deg1] = stops[index];
+      if (aspect <= aspect1) {
+        const t = (aspect - aspect0) / (aspect1 - aspect0);
+        degrees = deg0 + (deg1 - deg0) * t;
+        break;
+      }
+    }
+    return (degrees * Math.PI) / 180;
+  }
+
+  /**
+   * Distance at which a set of world points exactly fills `fill` of the
+   * viewport. Projecting the corners and rescaling the distance keeps the
+   * arena as large as the current window allows, on any aspect ratio.
+   */
+  private fitDistance(
+    look: THREE.Vector3,
+    direction: THREE.Vector3,
+    points: THREE.Vector3[],
+    fill: number,
+    fov: number,
+  ): number {
+    const camera = this.fitCamera;
+    camera.fov = fov;
+    camera.aspect = this.camera.aspect;
+    camera.updateProjectionMatrix();
+    let distance = Math.max(this.field.size.length, this.field.size.width) * 1.15;
+    for (let pass = 0; pass < 5; pass++) {
+      camera.position.copy(look).addScaledVector(direction, distance);
+      camera.lookAt(look);
+      camera.updateMatrixWorld();
+      let worst = 0;
+      for (const point of points) {
+        this.projected.copy(point).project(camera);
+        worst = Math.max(worst, Math.abs(this.projected.x), Math.abs(this.projected.y));
+      }
+      if (!Number.isFinite(worst) || worst < 0.001) break;
+      distance *= worst / fill;
+    }
+    return Math.min(distance, 90);
   }
 
   private updateCamera(dt: number, immediate = false): void {
     const target = new THREE.Vector3();
     const look = new THREE.Vector3();
+    const direction = new THREE.Vector3();
     const field = this.field.size;
     const mode = this.cameraMode === 'driver' && !this.focusRobotId ? 'broadcast' : this.cameraMode;
     const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    let desiredFov = 46;
+    let chase = false;
     if (mode === 'driver' && this.focusRobotId) {
       const robot = this.robots.get(this.focusRobotId);
       if (robot) {
@@ -770,33 +1030,49 @@ export class FieldScene {
         target.x = clamp(target.x, 0.35, field.length - 0.35);
         target.z = clamp(target.z, 0.35, field.width - 0.35);
         look.copy(pos).addScaledVector(forward, 4.6).add(new THREE.Vector3(0, 0.5, 0));
+        desiredFov = 60;
+        chase = true;
       }
     }
-    if (mode === 'broadcast' || target.lengthSq() === 0) {
-      // High three-quarter shot that frames the whole field, driver stations
-      // and scoring table the way a broadcast replay would.
-      target.set(field.length * 0.82, 8.2, field.width * 2.35);
-      look.set(field.length * 0.5, 0.6, field.width * 0.5);
-    }
-    if (mode === 'field') {
-      target.set(field.length / 2, 20.5, field.width / 2 + 1.6);
-      look.set(field.length / 2, 0.2, field.width / 2);
-    }
-    if (mode === 'orbit') {
-      const angle = this.elapsed * 0.08 + 0.7;
-      target.set(
-        field.length / 2 + Math.cos(angle) * 11.5,
-        6.0,
-        field.width / 2 + Math.sin(angle) * 11.5,
-      );
-      look.set(field.length / 2, 0.7, field.width / 2);
+    if (!chase) {
+      let fill = 0.9;
+      look.set(field.length / 2, 0.5, field.width / 2);
+      if (mode === 'field') {
+        // Straight-down tactical view: frame the carpet edge to edge.
+        direction.set(0, 1, 0.13).normalize();
+        look.set(field.length / 2, 0.25, field.width / 2);
+        desiredFov = 44;
+      } else if (mode === 'orbit') {
+        const angle = this.elapsed * 0.09 + 0.6;
+        const elevation = 0.52;
+        direction
+          .set(
+            Math.cos(elevation) * Math.cos(angle),
+            Math.sin(elevation),
+            Math.cos(elevation) * Math.sin(angle),
+          )
+          .normalize();
+        fill = 0.9;
+      } else {
+        // Broadcast: a low three-quarter shot whose angle tracks the window, so
+        // the field always spans the screen instead of floating in empty apron.
+        const elevation = 0.52;
+        const azimuth = this.broadcastAzimuth();
+        direction
+          .set(
+            Math.cos(elevation) * Math.cos(azimuth),
+            Math.sin(elevation),
+            Math.cos(elevation) * Math.sin(azimuth),
+          )
+          .normalize();
+      }
+      target.copy(look).addScaledVector(direction, this.fitDistance(look, direction, this.fieldFitPoints, fill, desiredFov));
     }
     // Name plates are only useful when the camera is close to a robot; from
     // the broadcast and top cameras they read as floating banners.
     for (const robot of this.robots.values()) {
       robot.label.visible = mode === 'driver' && robot.target.id !== this.focusRobotId;
     }
-    const desiredFov = mode === 'driver' ? 60 : mode === 'field' ? 46 : 46;
     const smoothing = immediate ? 1 : 1 - Math.exp(-(mode === 'driver' ? 9 : 5.5) * dt);
     this.camera.position.lerp(target, smoothing);
     this.cameraLook.lerp(look, smoothing);
