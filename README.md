@@ -122,14 +122,11 @@ every push to `main`:
 
 **https://jameswellsw.github.io/rebuild2/**
 
-Two one-time prerequisites on GitHub, because Pages on **private** repositories needs a paid plan:
-
-1. Make the repository public (or use a plan that includes Pages for private repositories).
-2. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-
-Re-run the workflow (Actions → *Deploy to GitHub Pages* → Run workflow) and the site is live.
-While Pages is off, the deploy job stops with an annotation pointing at this setting instead of
-failing silently.
+The deploy job enables Pages with `build_type: workflow` when it is not configured yet, so a push
+to `main` is all it takes — provided the repository is public, because Pages on **private**
+repositories needs a paid plan. If the token cannot enable Pages, the job stops with an annotation
+pointing at **Settings → Pages → Build and deployment → Source: GitHub Actions** rather than failing
+silently; flip it and re-run the workflow.
 
 ```bash
 VITE_BASE=/rebuild2/ npm run build -w @rebuilt/web   # what CI runs
