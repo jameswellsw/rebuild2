@@ -63,6 +63,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Enable Pages if needed
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" > /dev/null 2>&1; then
+            echo "Pages is already enabled."
+            exit 0
+          fi
+          echo "Enabling Pages with build_type=workflow…"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow || true
+
       - name: Check that Pages is enabled
         env:
           GH_TOKEN: ${{ github.token }}
