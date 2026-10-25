@@ -1,0 +1,25 @@
+{
+  "name": "rebuilt-arena",
+  "private": true,
+  "version": "0.1.0",
+  "description": "REBUILT Arena — a multiplayer-first FRC 2026 robotics simulator",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "npm run dev -w @rebuilt/web",
+    "dev:server": "npm run dev -w @rebuilt/server",
+    "build": "npm run build -w @rebuilt/web && npm run build -w @rebuilt/server",
+    "start": "npm run start -w @rebuilt/server",
+    "test": "npm run test -w @rebuilt/shared && npm run test -w @rebuilt/server",
+    "typecheck": "npm run typecheck -w @rebuilt/shared && npm run typecheck -w @rebuilt/server && npm run typecheck -w @rebuilt/web"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "playwright": "^1.49.1"
+  }
+}

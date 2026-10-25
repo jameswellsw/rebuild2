@@ -1,0 +1,25 @@
+{
+  "name": "REBUILT Arena — FRC 2026 Simulator",
+  "short_name": "REBUILT Arena",
+  "description": "Multiplayer-first FRC 2026 REBUILT simulator. Build a robot, join a room, climb the tower.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070a0f",
+  "theme_color": "#070a0f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["games", "education", "sports"],
+  "shortcuts": [
+    { "name": "Play now", "url": "./solo?quick=1" },
+    { "name": "Create a room", "url": "./?create=1" },
+    { "name": "Bot lab", "url": "./builder" }
+  ]
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+data/*.db
+data/*.db-*
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+.vite/
+artifacts/
