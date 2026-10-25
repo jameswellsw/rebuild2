@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   REBUILT_2026,
+  REBUILT_FIELD,
   RULE_CATALOG,
   type RuleCategory,
   type RuleDefinition,
@@ -366,8 +367,10 @@ export function RulesPage() {
             </a>
           </div>
           <small>
-            Rules version {REBUILT_2026.rulesVersion} · game ID {REBUILT_2026.id} · field{' '}
-            {(REBUILT_2026.field.length / 0.3048).toFixed(0)} ft × {(REBUILT_2026.field.width / 0.3048).toFixed(0)} ft.
+            Rules version {REBUILT_2026.rulesVersion} · game ID {REBUILT_2026.id} · playfield{' '}
+            {(REBUILT_FIELD.size.length / 0.3048).toFixed(0)} ft × {(REBUILT_FIELD.size.width / 0.3048).toFixed(0)} ft
+            (scaled up from the {((REBUILT_2026.field.length / 0.3048)).toFixed(0)} ft ×{' '}
+            {(REBUILT_2026.field.width / 0.3048).toFixed(0)} ft carpet).
             Unofficial fan simulator; not affiliated with FIRST.
           </small>
         </div>

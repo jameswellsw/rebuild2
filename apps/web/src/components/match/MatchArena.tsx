@@ -99,7 +99,10 @@ export function MatchArena({
   const finalResults = results ?? snapshot.results ?? null;
   const finished = snapshot.status === 'finished' || Boolean(finalResults);
   const isHumanPlayer = role === 'human' && Boolean(humanAlliance);
-  const canDrive = Boolean(controlled && snapshot.phase !== 'countdown' && !finished && onInput);
+  // The controls exist for the whole match, including the countdown: held keys
+  // are queued by the engine so the robot is already moving when AUTO starts.
+  const hasControl = Boolean(controlled && onInput);
+  const canDrive = hasControl && !finished && !snapshot.paused;
   const focusRobot = useMemo(() => {
     if (controlled) return controlled.setup.id;
     const robots = setup.robots;
@@ -265,17 +268,14 @@ export function MatchArena({
         </div>
       )}
 
-      {canDrive && controlled && (
+      {hasControl && controlled && (
         <MatchControls
           robot={controlled.state}
           config={controlled.setup.bot}
           robotLabel={`#${controlled.setup.teamNumber} ${controlled.setup.teamName}`}
           playerName={playerName}
-          disabled={!canDrive || snapshot.paused}
-          onInput={(input) => {
-            if (snapshot.phase === 'countdown' || finished) return;
-            onInput?.(controlled.setup.id, input);
-          }}
+          disabled={!canDrive}
+          onInput={(input) => onInput?.(controlled.setup.id, input)}
         />
       )}
 

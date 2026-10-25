@@ -2,52 +2,55 @@ import { DEFAULT_GAME } from '../games/rebuilt2026.js';
 import type { Alliance, FieldLayout, Vec2 } from '../types.js';
 
 /**
- * A clean, symmetrical interpretation of the REBUILT field: 54 ft x 27 ft
- * carpet, a HUB per alliance just either side of the center line, TOWERs and
- * OUTPOSTs at the alliance walls, and a fuel-rich midfield.
+ * The playable REBUILT field: a symmetric 28 m x 14 m arena (roughly 1.7x the
+ * 54 ft x 27 ft carpet) with a HUB per alliance just either side of the center
+ * line, TOWERs and OUTPOSTs at the alliance walls, and a fuel-rich midfield.
  *
- * Positions are meters, origin at the red/left corner. The real field has more
- * structure than this playable layout but the important zones are preserved.
+ * The layout is deliberately larger than the real carpet: robots, HUBs and
+ * TOWERs keep their real dimensions, so there is much more driving room and
+ * the broadcast camera has an arena to show instead of a cramped box.
+ *
+ * Positions are meters, origin at the red/left corner.
  */
 export const REBUILT_FIELD: FieldLayout = {
   id: 'rebuilt-2026-official',
   name: 'REBUILT 2026 — Championship Field',
   season: 2026,
-  version: 1,
-  size: { length: 16.46, width: 8.23, wallHeight: 1.04 },
+  version: 2,
+  size: { length: 28, width: 14, wallHeight: 1.04 },
   grid: 0.25,
   hubs: [
-    { id: 'red-hub', alliance: 'red', x: 5.95, y: 4.115, rotation: 0, width: 2.1, depth: 1.7 },
-    { id: 'blue-hub', alliance: 'blue', x: 10.51, y: 4.115, rotation: Math.PI, width: 2.1, depth: 1.7 },
+    { id: 'red-hub', alliance: 'red', x: 10.12, y: 7, rotation: 0, width: 2.1, depth: 1.7 },
+    { id: 'blue-hub', alliance: 'blue', x: 17.88, y: 7, rotation: Math.PI, width: 2.1, depth: 1.7 },
   ],
   towers: [
-    { id: 'red-tower', alliance: 'red', x: 0.86, y: 4.115, radius: 0.72 },
-    { id: 'blue-tower', alliance: 'blue', x: 15.6, y: 4.115, radius: 0.72 },
+    { id: 'red-tower', alliance: 'red', x: 1.46, y: 7, radius: 0.72 },
+    { id: 'blue-tower', alliance: 'blue', x: 26.54, y: 7, radius: 0.72 },
   ],
   outposts: [
-    { id: 'red-outpost', alliance: 'red', x: 0.3, y: 1.28, rotation: 0 },
-    { id: 'blue-outpost', alliance: 'blue', x: 16.16, y: 6.95, rotation: Math.PI },
+    { id: 'red-outpost', alliance: 'red', x: 0.51, y: 2.18, rotation: 0 },
+    { id: 'blue-outpost', alliance: 'blue', x: 27.49, y: 11.82, rotation: Math.PI },
   ],
   fuelSpawns: [
-    { x: 8.23, y: 4.115, count: 22, radius: 1.35 },
-    { x: 7.12, y: 2.32, count: 8, radius: 0.72 },
-    { x: 9.34, y: 5.91, count: 8, radius: 0.72 },
-    { x: 4.7, y: 6.5, count: 5, radius: 0.6 },
-    { x: 11.76, y: 1.73, count: 5, radius: 0.6 },
-    { x: 4.95, y: 1.45, count: 4, radius: 0.55 },
-    { x: 11.51, y: 6.78, count: 4, radius: 0.55 },
+    { x: 14, y: 7, count: 64, radius: 2.3 },
+    { x: 12.11, y: 3.95, count: 23, radius: 1.22 },
+    { x: 15.89, y: 10.05, count: 23, radius: 1.22 },
+    { x: 7.99, y: 11.06, count: 14, radius: 1.02 },
+    { x: 20, y: 2.94, count: 14, radius: 1.02 },
+    { x: 8.42, y: 2.47, count: 12, radius: 0.94 },
+    { x: 19.58, y: 11.53, count: 12, radius: 0.94 },
   ],
   barriers: [],
   startingPositions: {
     red: [
-      { x: 2.55, y: 2.35, heading: 0 },
-      { x: 1.9, y: 4.115, heading: 0 },
-      { x: 2.55, y: 5.88, heading: 0 },
+      { x: 4.34, y: 4, heading: 0 },
+      { x: 3.23, y: 7, heading: 0 },
+      { x: 4.34, y: 10, heading: 0 },
     ],
     blue: [
-      { x: 13.91, y: 5.88, heading: Math.PI },
-      { x: 14.56, y: 4.115, heading: Math.PI },
-      { x: 13.91, y: 2.35, heading: Math.PI },
+      { x: 23.66, y: 10, heading: Math.PI },
+      { x: 24.77, y: 7, heading: Math.PI },
+      { x: 23.66, y: 4, heading: Math.PI },
     ],
   },
 };

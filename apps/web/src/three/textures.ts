@@ -78,14 +78,16 @@ export function makeCarpetTexture(palette: 'dark' | 'light' = 'dark'): THREE.Can
   const size = 512;
   const light = palette === 'light';
   const ctx = canvas2d(size, size);
-  ctx.fillStyle = light ? '#82868b' : '#34373c';
+  // Dark carpet keeps the white field paint and the alliance colour readable;
+  // a pale weave under bright staging lights washed the whole floor out.
+  ctx.fillStyle = light ? '#4d5359' : '#2b2e33';
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < 9000; i++) {
-    const shade = light ? 108 + Math.random() * 30 : 36 + Math.random() * 26;
+  for (let i = 0; i < 12000; i++) {
+    const shade = light ? 66 + Math.random() * 44 : 34 + Math.random() * 24;
     ctx.fillStyle = `rgba(${shade},${shade + 2},${shade + 5},${0.15 + Math.random() * 0.35})`;
     ctx.fillRect(Math.random() * size, Math.random() * size, 1.2, 1.2);
   }
-  ctx.strokeStyle = light ? 'rgba(255,255,255,.045)' : 'rgba(255,255,255,.018)';
+  ctx.strokeStyle = light ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.02)';
   for (let i = 0; i < size; i += 32) {
     ctx.beginPath();
     ctx.moveTo(0, i);
@@ -106,13 +108,13 @@ export function makeVenueFloorTexture(): THREE.CanvasTexture {
   const size = 1024;
   const ctx = canvas2d(size, size);
   const gradient = ctx.createLinearGradient(0, 0, size, size);
-  gradient.addColorStop(0, '#7d848b');
-  gradient.addColorStop(0.5, '#72787f');
-  gradient.addColorStop(1, '#666c73');
+  gradient.addColorStop(0, '#767b81');
+  gradient.addColorStop(0.5, '#6c7178');
+  gradient.addColorStop(1, '#61666d');
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
   for (let i = 0; i < 22000; i++) {
-    const shade = 66 + Math.random() * 62;
+    const shade = 58 + Math.random() * 58;
     ctx.fillStyle = `rgba(${shade},${shade + 2},${shade + 6},${0.04 + Math.random() * 0.16})`;
     ctx.fillRect(Math.random() * size, Math.random() * size, 2.4, 2.4);
   }
@@ -143,24 +145,29 @@ export function makeCenterDecal(): THREE.CanvasTexture {
   const ctx = canvas2d(size, size);
   const c = size / 2;
   ctx.clearRect(0, 0, size, size);
-  ctx.strokeStyle = 'rgba(255,255,255,.5)';
-  ctx.lineWidth = 7;
+  // Solid disc under the lettering so the logo reads on a dark carpet.
+  ctx.fillStyle = 'rgba(9,14,21,.82)';
   ctx.beginPath();
-  ctx.arc(c, c, 216, 0, Math.PI * 2);
+  ctx.arc(c, c, 238, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.85)';
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.arc(c, c, 232, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,210,63,.8)';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255,210,63,.95)';
+  ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.arc(c, c, 198, 0, Math.PI * 2);
+  ctx.arc(c, c, 208, 0, Math.PI * 2);
   ctx.stroke();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(255,255,255,.9)';
-  ctx.font = '800 92px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.fillStyle = '#f7fbff';
+  ctx.font = '800 96px "Barlow Condensed", "Arial Narrow", sans-serif';
   ctx.fillText('REBUILT', c, c - 30);
-  ctx.fillStyle = 'rgba(255,210,63,.88)';
-  ctx.font = '700 56px "Barlow Condensed", "Arial Narrow", sans-serif';
-  ctx.fillText('2026', c, c + 52);
+  ctx.fillStyle = '#ffd23f';
+  ctx.font = '700 60px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.fillText('2026', c, c + 54);
   const texture = new THREE.CanvasTexture(ctx.canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;

@@ -109,7 +109,9 @@ export function computeAIInput(
 
   if (robot.carrying > 0) {
     const steer = toward(robot, hub.x, hub.y, 0.9);
-    input.moveY = robot.climb.level > 0 ? 0 : steer.moveY;
+    // Hold a shooting stand-off instead of driving into the HUB and wedging
+    // there while waiting for the HUB to become active again.
+    input.moveY = robot.climb.level > 0 || distToHub < 2.4 ? 0 : steer.moveY;
     input.rotate = steer.rotate;
     input.actions.intake = true;
     return input;

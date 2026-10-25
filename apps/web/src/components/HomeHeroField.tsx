@@ -1,5 +1,5 @@
 import { BotAvatar } from './BotAvatar';
-import { PRESET_BOTS } from '@rebuilt/shared';
+import { PRESET_BOTS, REBUILT_FIELD } from '@rebuilt/shared';
 
 export function HomeHeroField() {
   const atlas = PRESET_BOTS[0];
@@ -9,7 +9,9 @@ export function HomeHeroField() {
       <div className="hero-arena-glow" />
       <div className="arena-plate">
         <div className="arena-plate-top">
-          <span className="plate-label">FIELD 16.46 m × 8.23 m</span>
+          <span className="plate-label">
+            FIELD {REBUILT_FIELD.size.length.toFixed(2)} m × {REBUILT_FIELD.size.width.toFixed(2)} m
+          </span>
           <span className="plate-label">REBUILT // 2026</span>
         </div>
         <svg viewBox="0 0 700 440" className="hero-field-svg" role="img">

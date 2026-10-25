@@ -47,7 +47,10 @@ export function useLocalMatch() {
     let last = performance.now();
     const tick = (now: number) => {
       if (!engineRef.current || !mountedRef.current) return;
-      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+      // Feed the engine the real elapsed time. Capping at 50 ms used to make
+      // the whole match run in slow motion whenever the renderer dropped below
+      // 20 fps, which made the controls feel dead on weaker machines.
+      const dt = Math.min(0.4, Math.max(0, (now - last) / 1000));
       last = now;
       engineRef.current.step(dt);
       if (now - lastRenderRef.current > 50 || engineRef.current.state.status === 'finished') {
@@ -76,6 +79,10 @@ export function useLocalMatch() {
       const builtSetup = buildLocalSetup(options);
       const engine = new MatchEngine(builtSetup);
       engineRef.current = engine;
+      if (import.meta.env.DEV) {
+        // Handy for tuning physics from the devtools console.
+        (window as unknown as Record<string, unknown>).__rebuiltEngine = engine;
+      }
       savedRef.current = false;
       lastRenderRef.current = 0;
       setLastOptions(options);

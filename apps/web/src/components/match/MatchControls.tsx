@@ -44,6 +44,14 @@ export function MatchControls({
     return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
   });
   const canDrive = Boolean(robot && config && !disabled && !robot.disabled && !robot.tipped && !robot.disqualified);
+  // Keyboard listeners stay attached for the whole match. They read this ref
+  // instead of re-binding every snapshot, so a held key survives a pause.
+  const canDriveRef = useRef(canDrive);
+  const driving = Boolean(config);
+
+  useEffect(() => {
+    canDriveRef.current = canDrive;
+  }, [canDrive]);
 
   useEffect(() => {
     onInputRef.current = onInput;
@@ -115,7 +123,7 @@ export function MatchControls({
   }, [canDrive, setAction]);
 
   useEffect(() => {
-    if (!canDrive) return;
+    if (!driving) return;
     const isTyping = (target: EventTarget | null) => {
       const element = target as HTMLElement | null;
       return Boolean(
@@ -144,7 +152,7 @@ export function MatchControls({
         syncMotion();
         return;
       }
-      if (event.repeat) return;
+      if (event.repeat || !canDriveRef.current) return;
       if (event.code === 'Space') {
         setShooting(true);
         setAction('shoot', true);
@@ -186,7 +194,7 @@ export function MatchControls({
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
     };
-  }, [canDrive, emitNow, pulseDrop, setAction, toggleAction]);
+  }, [driving, emitNow, pulseDrop, setAction, toggleAction]);
 
   useEffect(() => {
     if (!robot) return;

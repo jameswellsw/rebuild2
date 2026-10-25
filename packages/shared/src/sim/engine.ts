@@ -42,7 +42,10 @@ import { Rng, clamp, circleRectOverlap, round } from './math.js';
 export const FIXED_DT = 1 / 60;
 const BALL_RADIUS = 0.085;
 const GRAVITY = 9.81;
-const MAX_FIELD_FUEL = 120;
+/** Loose FUEL ceiling, scaled from the number of balls the field starts with. */
+function fuelCeilingFor(field: FieldLayout): number {
+  return Math.round(field.fuelSpawns.reduce((total, spawn) => total + spawn.count, 0) * 1.45);
+}
 const REVIEW_DELAY = 6;
 
 type RefResult = { ok: boolean; message: string; event?: RuleEvent };
@@ -118,11 +121,15 @@ export class MatchEngine {
   private autoTowerScored = false;
   private teleopTowerScored = false;
   private hubPatternDecided = false;
+  private readonly fuelCeiling: number;
+  private readonly tippedAt = new Map<string, number>();
+  private readonly omega = new Map<string, number>();
 
   constructor(setup: MatchSetup, options: EngineOptions = {}) {
     this.game = options.game ?? DEFAULT_GAME;
     this.setup = clone(setup);
     this.field = this.setup.field;
+    this.fuelCeiling = fuelCeilingFor(this.field);
     this.startedAt = options.startedAt ?? Date.now();
     this.rng = new Rng(this.setup.seed >>> 0);
     if (options.skipCountdown) this.countdown = 0;
@@ -332,10 +339,13 @@ export class MatchEngine {
 
   step(dt: number): void {
     if (this.state.status === 'finished' || this.state.paused) return;
-    const clamped = clamp(dt, 0, 0.1);
-    this.accumulator += clamped;
+    // Keep simulated time locked to wall time even when the renderer is slow:
+    // a frame that took a third of a second still advances a third of a second
+    // of match, in fixed steps, instead of silently running in slow motion.
+    const clamped = clamp(dt, 0, 0.4);
+    this.accumulator = Math.min(this.accumulator + clamped, 0.55);
     let guard = 0;
-    while (this.accumulator >= FIXED_DT && guard++ < 12) {
+    while (this.accumulator >= FIXED_DT && guard++ < 30) {
       this.fixedStep(FIXED_DT);
       this.accumulator -= FIXED_DT;
       if (this.state.results) break;
@@ -366,6 +376,7 @@ export class MatchEngine {
     this.moveRobots(dt);
     const collision = this.resolveRobotCollisions();
     this.resolveEnvironment();
+    this.updateRecovery(dt);
     const frame: PhysicsFrame = {
       dt,
       contacts: collision.contacts,
@@ -482,13 +493,16 @@ export class MatchEngine {
       const setup = this.setup.robots.find((r) => r.id === robot.id);
       if (!setup) continue;
       const input = this.inputFor(robot);
+      const grip = clamp(setup.bot.stats.grip || 0.8, 0.2, 1);
       robot.intakeActive = input.actions.intake && setup.bot.intake.enabled && !robot.disabled && !robot.tipped;
       robot.expanded = Boolean(input.actions.expand) && setup.bot.arm.enabled;
 
       const immobilized = robot.disabled || robot.disqualified || robot.tipped || robot.climb.active;
       if (immobilized) {
-        robot.vx *= 0.8;
-        robot.vy *= 0.8;
+        const damp = Math.exp(-9 * dt);
+        robot.vx *= damp;
+        robot.vy *= damp;
+        this.omega.set(robot.id, (this.omega.get(robot.id) ?? 0) * damp);
         robot.x += robot.vx * dt;
         robot.y += robot.vy * dt;
         continue;
@@ -507,11 +521,15 @@ export class MatchEngine {
       const targetVx = (moveY * c - moveX * s) * setup.bot.stats.maxSpeed;
       const targetVy = (moveY * s + moveX * c) * setup.bot.stats.maxSpeed;
       const staying = mag < 0.05;
-      const accel = staying ? 7.5 : setup.bot.stats.accel;
+      // Traction decides how hard the wheels can bite. Low-grip drivetrains
+      // spin up and coast; high-grip swerve stops almost on the spot.
+      const traction = 0.55 + grip * 0.75;
+      const accel = setup.bot.stats.accel * traction;
+      const brake = accel * 1.35;
+      const maxDv = (staying ? brake : accel) * dt;
       const dvx = targetVx - robot.vx;
       const dvy = targetVy - robot.vy;
       const dLen = Math.hypot(dvx, dvy);
-      const maxDv = accel * dt;
       if (dLen > maxDv && dLen > 1e-6) {
         robot.vx += (dvx / dLen) * maxDv;
         robot.vy += (dvy / dLen) * maxDv;
@@ -519,7 +537,14 @@ export class MatchEngine {
         robot.vx = targetVx;
         robot.vy = targetVy;
       }
-      robot.heading = (robot.heading + input.rotate * setup.bot.stats.turnRate * dt + Math.PI * 4) % (Math.PI * 2);
+      // Angular inertia: swerve modules take a moment to reach full yaw rate
+      // instead of the chassis teleporting to a new heading.
+      const targetOmega = input.rotate * setup.bot.stats.turnRate;
+      const angularAccel = setup.bot.stats.turnRate * (4 + 4 * grip);
+      const omega = this.omega.get(robot.id) ?? 0;
+      const nextOmega = omega + clamp(targetOmega - omega, -angularAccel * dt, angularAccel * dt);
+      this.omega.set(robot.id, nextOmega);
+      robot.heading = (robot.heading + nextOmega * dt + Math.PI * 4) % (Math.PI * 2);
       robot.x += robot.vx * dt;
       robot.y += robot.vy * dt;
     }
@@ -535,25 +560,55 @@ export class MatchEngine {
     const damage: PhysicsFrame['newDamage'] = [];
     const robots = this.state.robots;
     const masses = new Map<string, number>();
+    const grips = new Map<string, number>();
     for (const r of robots) {
-      masses.set(r.id, this.setup.robots.find((s) => s.id === r.id)?.bot.chassis.mass ?? 40);
+      const bot = this.setup.robots.find((s) => s.id === r.id)?.bot;
+      masses.set(r.id, bot?.chassis.mass ?? 40);
+      grips.set(r.id, clamp(bot?.stats.grip ?? 0.8, 0.2, 1));
     }
-    for (let i = 0; i < robots.length; i++) {
-      for (let j = i + 1; j < robots.length; j++) {
-        const a = robots[i];
-        const b = robots[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy);
-        const minDist = a.radius + b.radius;
-        if (dist > minDist + 0.06) continue;
-        const nx = dist > 1e-6 ? dx / dist : 1;
-        const ny = dist > 1e-6 ? dy / dist : 0;
-        const relative = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-        const impactSpeed = Math.max(0, -relative);
-        contacts.push({ aId: a.id, bId: b.id, distance: dist, impactSpeed, normalX: nx, normalY: ny });
-        if (dist < minDist) {
-          const overlap = minDist - dist;
+    // Bumper contacts are resolved over a few passes: one pass can push a robot
+    // into a third robot, and leftover overlap is what makes robots look like
+    // they are sinking into each other.
+    const passes = 3;
+    for (let pass = 0; pass < passes; pass++) {
+      for (let i = 0; i < robots.length; i++) {
+        for (let j = i + 1; j < robots.length; j++) {
+          const a = robots[i];
+          const b = robots[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy);
+          const minDist = a.radius + b.radius;
+          if (dist > minDist + 0.06) continue;
+          const nx = dist > 1e-6 ? dx / dist : 1;
+          const ny = dist > 1e-6 ? dy / dist : 0;
+          const relative = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+          const impactSpeed = Math.max(0, -relative);
+          if (pass === 0) {
+            contacts.push({ aId: a.id, bId: b.id, distance: dist, impactSpeed, normalX: nx, normalY: ny });
+          }
+          // Physical tipping / damage telemetry. These are physics events; the
+          // rules engine decides whether they are violations.
+          if (pass === 0 && a.alliance !== b.alliance && impactSpeed > 4.2) {
+            const massA = masses.get(a.id) ?? 40;
+            const massB = masses.get(b.id) ?? 40;
+            const victim = massA < massB ? a : b;
+            const attacker = victim === a ? b : a;
+            const vulnerable = victim.expanded || victim.climb.active;
+            if (vulnerable && impactSpeed > 4.6 && !victim.tipped) {
+              victim.tipped = true;
+              victim.vx = 0;
+              victim.vy = 0;
+              this.tippedAt.set(victim.id, this.state.time);
+              tips.push({ robotId: victim.id, byRobotId: attacker.id, impactSpeed });
+            }
+            if (impactSpeed > 6.6 && !victim.disabled) {
+              damage.push({ robotId: victim.id, byRobotId: attacker.id, impactSpeed });
+            }
+          }
+          const slop = 0.002;
+          if (dist >= minDist - slop) continue;
+          const overlap = minDist - dist - slop;
           const imA = 1 / (masses.get(a.id) ?? 40);
           const imB = 1 / (masses.get(b.id) ?? 40);
           const totalIm = imA + imB;
@@ -562,35 +617,60 @@ export class MatchEngine {
           b.x += nx * overlap * (imB / totalIm);
           b.y += ny * overlap * (imB / totalIm);
           if (relative < 0) {
-            const restitution = 0.12;
+            // Rubbery bumpers absorb most of the hit; only a little energy
+            // comes back, so robots lean on each other instead of pinging off.
+            const restitution = 0.16;
             const impulse = (-(1 + restitution) * relative) / totalIm;
             a.vx -= impulse * imA * nx;
             a.vy -= impulse * imA * ny;
             b.vx += impulse * imB * nx;
             b.vy += impulse * imB * ny;
           }
-        }
-        // Physical tipping / damage telemetry. These are physics events; the
-        // rules engine decides whether they are violations.
-        if (a.alliance !== b.alliance && impactSpeed > 4.2) {
-          const massA = masses.get(a.id) ?? 40;
-          const massB = masses.get(b.id) ?? 40;
-          const victim = massA < massB ? a : b;
-          const attacker = victim === a ? b : a;
-          const vulnerable = victim.expanded || victim.climb.active;
-          if (vulnerable && impactSpeed > 4.6 && !victim.tipped) {
-            victim.tipped = true;
-            victim.vx = 0;
-            victim.vy = 0;
-            tips.push({ robotId: victim.id, byRobotId: attacker.id, impactSpeed });
-          }
-          if (impactSpeed > 6.6 && !victim.disabled) {
-            damage.push({ robotId: victim.id, byRobotId: attacker.id, impactSpeed });
-          }
+          // Tangential friction between bumpers: a pushing robot drags the
+          // other one sideways instead of sliding past it.
+          const tx = -ny;
+          const ty = nx;
+          const tangential = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
+          const mu = 0.25 + 0.35 * ((grips.get(a.id) ?? 0.8) + (grips.get(b.id) ?? 0.8)) * 0.5;
+          const frictionImpulse = (-tangential / totalIm) * mu;
+          a.vx -= frictionImpulse * imA * tx;
+          a.vy -= frictionImpulse * imA * ty;
+          b.vx += frictionImpulse * imB * tx;
+          b.vy += frictionImpulse * imB * ty;
         }
       }
     }
     return { contacts, tips, damage };
+  }
+
+  /**
+   * A tipped robot is not a permanent spectator: after a few seconds of lying
+   * still (and only if it is not being pinned) it self-rights with a short
+   * recovery, which keeps a solo match playable after a bad collision.
+   */
+  private updateRecovery(dt: number): void {
+    for (const robot of this.state.robots) {
+      if (!robot.tipped) {
+        this.tippedAt.delete(robot.id);
+        continue;
+      }
+      const since = this.tippedAt.get(robot.id);
+      if (since === undefined) {
+        this.tippedAt.set(robot.id, this.state.time);
+        continue;
+      }
+      if (robot.pinned || robot.disabled || robot.disqualified) continue;
+      if (this.state.time - since < 4) continue;
+      robot.tipped = false;
+      robot.vx = 0;
+      robot.vy = 0;
+      this.tippedAt.delete(robot.id);
+      this.addSystem(
+        'ROBOT RIGHTED',
+        `${robot.teamName} #${robot.teamNumber} rights itself after the collision and rejoins play.`,
+      );
+    }
+    void dt;
   }
 
   private resolveEnvironment(): void {
@@ -631,7 +711,7 @@ export class MatchEngine {
         const dx = robot.x - tower.x;
         const dy = robot.y - tower.y;
         const dist = Math.hypot(dx, dy);
-        const minDist = tower.radius + r * 0.6;
+        const minDist = tower.radius + r;
         if (dist < minDist && dist > 1e-6) {
           const nx = dx / dist;
           const ny = dy / dist;
@@ -721,14 +801,18 @@ export class MatchEngine {
     const speed = targetDist / time;
     const vx = Math.cos(aimAngle) * speed;
     const vy = Math.sin(aimAngle) * speed;
-    const vz = (targetZ - 0.55) / time + 0.5 * GRAVITY * time;
+    // Launch above the rim: a ball leaving the shooter at chassis height was
+    // caught by the HUB's own side wall on close-range shots, which is why so
+    // many shots bounced out instead of dropping through the opening.
+    const startZ = this.game.hub.rimHeight + 0.12;
+    const vz = (targetZ - startZ) / time + 0.5 * GRAVITY * time;
     const startX = robot.x + Math.cos(robot.heading) * (robot.radius * 0.7);
     const startY = robot.y + Math.sin(robot.heading) * (robot.radius * 0.7);
     this.state.fuel.push({
       id: this.fuelCounter++,
       x: startX,
       y: startY,
-      z: 0.55,
+      z: startZ,
       vx,
       vy,
       vz,
@@ -979,7 +1063,7 @@ export class MatchEngine {
         human.reach = 0;
         if (this.state.phase !== 'countdown' && this.state.phase !== 'post') {
           const loose = this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length;
-          if (loose < 82 && human.feedCooldown <= 0 && human.storage >= 3) this.feedHuman(human);
+          if (loose < this.fuelCeiling * 0.72 && human.feedCooldown <= 0 && human.storage >= 3) this.feedHuman(human);
         }
       }
     }
@@ -987,7 +1071,7 @@ export class MatchEngine {
 
   private feedHuman(human: HumanPlayerState): void {
     if (human.feedCooldown > 0 || human.storage < 3) return;
-    if (this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length >= MAX_FIELD_FUEL) return;
+    if (this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length >= this.fuelCeiling) return;
     human.storage -= 3;
     human.feedCooldown = 1.15;
     human.lastFeedAt = this.state.time;

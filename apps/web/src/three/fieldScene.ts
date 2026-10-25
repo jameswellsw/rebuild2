@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { FieldLayout, MatchSetup, MatchSnapshot, RobotSnapshot } from '@rebuilt/shared';
 import { createRobotModel, type RobotVisual } from './robotModel';
 import { makeCarpetTexture, makeCenterDecal, makeTextTexture, makeVenueFloorTexture } from './textures';
@@ -104,6 +108,10 @@ export class FieldScene {
   private readonly projected = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
   private readonly quality: 'high' | 'balanced';
+  private composer: EffectComposer | null = null;
+  private bloom: UnrealBloomPass | null = null;
+  private postEnabled = true;
+  private slowFrames = 0;
 
   constructor(container: HTMLElement, options: FieldSceneOptions) {
     this.container = container;
@@ -127,7 +135,8 @@ export class FieldScene {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xdfe8f2, 58, 150);
+    // Fog starts past the venue rig so the arena stays crisp at every size.
+    this.scene.fog = new THREE.Fog(0x9fb4c8, Math.max(48, this.field.size.length * 2.1), Math.max(140, this.field.size.length * 5.2));
     this.camera = new THREE.PerspectiveCamera(
       46,
       (container.clientWidth || 1) / (container.clientHeight || 1),
@@ -139,6 +148,7 @@ export class FieldScene {
     this.fieldFitPoints = fieldFitPoints(this.field);
     this.fitCamera.aspect = this.camera.aspect;
 
+    this.setupPostProcessing();
     this.addSky();
     this.addLights();
     this.addArena();
@@ -149,13 +159,14 @@ export class FieldScene {
     this.addBarriers();
     this.addSetDressing();
     this.addGrandstand();
+    this.addVenueRig();
     this.addRobots();
 
     const maxFuel = Math.max(48, this.field.fuelSpawns.reduce((n, s) => n + s.count, 0) + 32);
     this.fuelMesh = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.083, 10, 8),
       material(YELLOW, { roughness: 0.66, metalness: 0.05, emissive: '#4a3500', emissiveIntensity: 0.28 }),
-      Math.min(190, maxFuel),
+      Math.min(280, maxFuel),
     );
     this.fuelMesh.castShadow = false;
     this.fuelMesh.receiveShadow = false;
@@ -168,18 +179,36 @@ export class FieldScene {
     this.renderer.setAnimationLoop(this.animate);
   }
 
+  /**
+   * Bloom is what makes the LED trim, HUB rims and the hanging video board read
+   * as light sources instead of flat coloured boxes. Balanced quality skips it.
+   */
+  private setupPostProcessing(): void {
+    if (this.quality !== 'high') {
+      this.postEnabled = false;
+      return;
+    }
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.setSize(size.x || 1, size.y || 1);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x || 1, size.y || 1), 0.62, 0.75, 0.8);
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(new OutputPass());
+  }
+
   private addSky(): void {
-    const geo = new THREE.SphereGeometry(90, 24, 16);
+    const geo = new THREE.SphereGeometry(220, 32, 20);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
       uniforms: {
-        top: { value: new THREE.Color('#bcd6f0') },
-        bottom: { value: new THREE.Color('#f7fafd') },
-        glow: { value: new THREE.Color('#ffffff') },
+        top: { value: new THREE.Color('#2f6fae') },
+        bottom: { value: new THREE.Color('#dce9f5') },
+        glow: { value: new THREE.Color('#ffe7bd') },
       },
       vertexShader: `varying vec3 vWorld; void main(){ vWorld = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-      fragmentShader: `varying vec3 vWorld; uniform vec3 top; uniform vec3 bottom; uniform vec3 glow; void main(){ float h = clamp(normalize(vWorld).y * 0.5 + 0.5, 0.0, 1.0); vec3 col = mix(bottom, top, smoothstep(0.02, 0.9, h)); col += glow * 0.06 * smoothstep(0.55, 0.95, h); gl_FragColor = vec4(col, 1.0); }`,
+      fragmentShader: `varying vec3 vWorld; uniform vec3 top; uniform vec3 bottom; uniform vec3 glow; void main(){ vec3 dir = normalize(vWorld); float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0); vec3 col = mix(bottom, top, smoothstep(0.46, 0.95, h)); float sun = pow(max(dot(dir, normalize(vec3(0.45, 0.35, 0.82))), 0.0), 10.0); col += glow * sun * 0.45; col = mix(col, glow * 1.05, (1.0 - smoothstep(0.44, 0.53, h)) * 0.3); gl_FragColor = vec4(col, 1.0); }`,
     });
     this.scene.add(new THREE.Mesh(geo, mat));
   }
@@ -187,11 +216,12 @@ export class FieldScene {
   private addLights(): void {
     const { length: L, width: W } = this.field.size;
     const center = new THREE.Vector3(L / 2, 0, W / 2);
-    this.scene.add(new THREE.HemisphereLight(0xeaf2fc, 0x8d949c, 1.05));
+    this.scene.add(new THREE.HemisphereLight(0xeaf2fc, 0x707780, 0.55));
+    this.scene.add(new THREE.AmbientLight(0x9db6d0, 0.15));
 
     // Key light aimed at the middle of the field so the shadow frustum covers
     // the whole carpet and the corner structures stay lit.
-    const key = new THREE.DirectionalLight(0xfff6ea, 2.35);
+    const key = new THREE.DirectionalLight(0xfff6ea, 2.9);
     key.position.set(center.x + 7, 17, center.z + 9);
     key.target.position.copy(center);
     key.castShadow = this.quality === 'high';
@@ -250,7 +280,7 @@ export class FieldScene {
     // Painted walkway between the field walls and the safety fence.
     const apron = new THREE.Mesh(
       new THREE.PlaneGeometry(L + 8.8, W + 8.8),
-      new THREE.MeshStandardMaterial({ color: '#a9b0b8', roughness: 0.9, metalness: 0.04 }),
+      new THREE.MeshStandardMaterial({ color: '#8f979f', roughness: 0.9, metalness: 0.04 }),
     );
     apron.rotation.x = -Math.PI / 2;
     apron.position.set(cx, -0.028, cz);
@@ -280,8 +310,8 @@ export class FieldScene {
     paint(edgeMat, L + 3.82, cz, 0.05, W + 5.4);
 
     // Fence line: white safety railing around the field, like the real venue.
-    const postMat = material('#eef2f6', { metalness: 0.12, roughness: 0.62 });
-    const railMat = material('#f6f8fa', { metalness: 0.14, roughness: 0.55 });
+    const postMat = material('#d3dae1', { metalness: 0.12, roughness: 0.62 });
+    const railMat = material('#dee4ea', { metalness: 0.14, roughness: 0.55 });
     const fenceOffset = 2.0;
     for (const z of [-fenceOffset, W + fenceOffset]) {
       box(this.scene, railMat, L + 6.6, 0.05, 0.05, L / 2, 1.03, z, false);
@@ -305,6 +335,8 @@ export class FieldScene {
     const cz = W / 2;
 
     const carpetTex = makeCarpetTexture('light');
+    // Keep the carpet weave at a constant physical size on any field size.
+    carpetTex.repeat.set(Math.max(4, Math.round(L * 0.6)), Math.max(3, Math.round(W * 0.6)));
     const carpet = new THREE.Mesh(
       new THREE.PlaneGeometry(L, W),
       new THREE.MeshStandardMaterial({ map: carpetTex, roughness: 0.97, metalness: 0.02 }),
@@ -315,8 +347,8 @@ export class FieldScene {
     this.scene.add(carpet);
 
     // Alliance floor paint on each end.
-    const zoneRed = new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity: 0.16, depthWrite: false });
-    const zoneBlue = new THREE.MeshBasicMaterial({ color: BLUE, transparent: true, opacity: 0.16, depthWrite: false });
+    const zoneRed = new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity: 0.3, depthWrite: false });
+    const zoneBlue = new THREE.MeshBasicMaterial({ color: BLUE, transparent: true, opacity: 0.3, depthWrite: false });
     for (const [alliance, mat] of [['red', zoneRed], ['blue', zoneBlue]] as const) {
       const zone = new THREE.Mesh(new THREE.PlaneGeometry(4.4, W - 0.24), mat);
       zone.rotation.x = -Math.PI / 2;
@@ -402,7 +434,7 @@ export class FieldScene {
 
     // Midfield decal painted onto the carpet.
     const decal = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.5, 3.5),
+      new THREE.PlaneGeometry(4.6, 4.6),
       new THREE.MeshBasicMaterial({
         map: makeCenterDecal(),
         transparent: true,
@@ -498,6 +530,13 @@ export class FieldScene {
       const backboard = box(group, allyMat, 0.12, 1.85, 2.1, -1.16, 1.0, 0);
       backboard.rotation.z = 0.14;
       box(group, black, 0.16, 0.1, 2.2, -1.05, 1.94, 0, false);
+      // Panel seams and an LED header strip: a plain coloured slab read as a
+      // flat red wall from the chase camera.
+      for (let seam = -2; seam <= 2; seam++) {
+        box(group, black, 0.14, 1.62, 0.014, -1.15, 1.0, seam * 0.42, false);
+      }
+      box(group, glowMat, 0.15, 0.05, 2.06, -1.15, 1.86, 0, false);
+      box(group, glowMat, 0.15, 0.05, 2.06, -1.15, 0.14, 0, false);
       const signTex = makeTextTexture(hub.alliance === 'red' ? 'RED HUB' : 'BLUE HUB', {
         width: 512,
         height: 256,
@@ -651,8 +690,8 @@ export class FieldScene {
   /** Driver stations, the scoring table and the remaining venue dressing. */
   private addSetDressing(): void {
     const { length: L, width: W } = this.field.size;
-    const shell = material('#e6eaef', { metalness: 0.12, roughness: 0.6 });
-    const frameMat = material('#cdd4dc', { metalness: 0.45, roughness: 0.4 });
+    const shell = material('#c9d1d9', { metalness: 0.12, roughness: 0.62 });
+    const frameMat = material('#b6bfc9', { metalness: 0.45, roughness: 0.4 });
     const dark = material('#1b212a', { metalness: 0.45, roughness: 0.45 });
     const deskMat = material('#f3f6f9', { roughness: 0.7, metalness: 0.08 });
     const redMat = material('#a8162c', { roughness: 0.5 });
@@ -834,6 +873,111 @@ export class FieldScene {
     );
     banner.position.set(cx, 2.4, wallZ + 0.16);
     this.scene.add(banner);
+
+    // Ribbon board along the front of the stand: a continuous line of light
+    // down the far side of the venue.
+    const ribbonZ = frontZ + 0.19;
+    const ribbon = new THREE.Mesh(
+      new THREE.PlaneGeometry(span, 0.46),
+      new THREE.MeshBasicMaterial({ color: '#08111c', toneMapped: false }),
+    );
+    ribbon.position.set(cx, 0.5, ribbonZ);
+    this.scene.add(ribbon);
+    const ribbonCool = new THREE.MeshBasicMaterial({ color: '#4ec3ff', toneMapped: false });
+    const ribbonWarm = new THREE.MeshBasicMaterial({ color: '#ffcf5a', toneMapped: false });
+    let ribbonIndex = 0;
+    for (let x = -span / 2 + 0.6; x < span / 2 - 0.6; x += 1.55) {
+      box(
+        this.scene,
+        ribbonIndex++ % 5 === 0 ? ribbonWarm : ribbonCool,
+        1.05,
+        0.13,
+        0.03,
+        cx + x,
+        0.5,
+        ribbonZ + 0.02,
+        false,
+      );
+    }
+
+    // Hanging video board: the bright anchor the broadcast camera sees over the
+    // far wall, and the main thing bloom has to work with.
+    const boardW = Math.min(span * 0.4, 9.6);
+    const boardH = boardW * 0.32;
+    const boardY = 5.4;
+    const boardZ = wallZ - 0.72;
+    const rigMat = material('#151c24', { metalness: 0.55, roughness: 0.38 });
+    for (const dx of [-boardW * 0.36, boardW * 0.36]) {
+      const postH = boardY - boardH / 2 + 0.2;
+      box(this.scene, rigMat, 0.16, postH, 0.16, cx + dx, postH / 2, boardZ);
+    }
+    box(this.scene, rigMat, boardW + 0.6, boardH + 0.6, 0.44, cx, boardY, boardZ);
+    const boardTex = makeTextTexture('REBUILT 2026', {
+      width: 1024,
+      height: 340,
+      background: '#08111c',
+      color: '#f5f9ff',
+      sub: 'CHAMPIONSHIP ARENA',
+      accent: '#ffd23f',
+      border: true,
+    });
+    const boardFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(boardW, boardH),
+      new THREE.MeshBasicMaterial({ map: boardTex, toneMapped: false }),
+    );
+    boardFace.position.set(cx, boardY, boardZ + 0.23);
+    this.scene.add(boardFace);
+    box(
+      this.scene,
+      new THREE.MeshBasicMaterial({ color: '#8fd8ff', toneMapped: false }),
+      boardW + 0.5,
+      0.06,
+      0.06,
+      cx,
+      boardY - boardH / 2 - 0.32,
+      boardZ + 0.24,
+      false,
+    );
+  }
+
+  /**
+   * Stadium light towers around the venue. They give the broadcast shots depth
+   * and a set of bright emissive heads for the bloom pass to work on.
+   */
+  private addVenueRig(): void {
+    const { length: L, width: W } = this.field.size;
+    const steel = material('#3d4753', { metalness: 0.7, roughness: 0.36 });
+    const lamp = new THREE.MeshBasicMaterial({ color: '#fff4dd', toneMapped: false });
+    const towers: Array<[number, number]> = [
+      [-7, -8],
+      [L + 7, -8],
+      [-7, W + 8],
+      [L + 7, W + 8],
+    ];
+    for (const [x, z] of towers) {
+      const height = 13;
+      for (const [dx, dz] of [
+        [-0.33, -0.33],
+        [0.33, -0.33],
+        [-0.33, 0.33],
+        [0.33, 0.33],
+      ] as const) {
+        box(this.scene, steel, 0.09, height, 0.09, x + dx, height / 2, z + dz, false);
+      }
+      for (let y = 1.4; y < height; y += 1.7) {
+        box(this.scene, steel, 0.76, 0.05, 0.05, x, y, z - 0.33, false);
+        box(this.scene, steel, 0.76, 0.05, 0.05, x, y, z + 0.33, false);
+        box(this.scene, steel, 0.05, 0.05, 0.76, x - 0.33, y, z, false);
+      }
+      const head = new THREE.Group();
+      head.position.set(x, height + 0.15, z);
+      this.scene.add(head);
+      head.lookAt(L / 2, 0, W / 2);
+      box(head, steel, 2.4, 0.2, 1.15, 0, 0, 0, false);
+      for (let index = -1; index <= 1; index++) {
+        box(head, lamp, 0.6, 0.07, 0.95, index * 0.76, -0.13, 0, false);
+      }
+    }
   }
 
   private addRobots(): void {
@@ -941,6 +1085,7 @@ export class FieldScene {
     const height = this.container.clientHeight;
     if (!width || !height) return;
     this.renderer.setSize(width, height, false);
+    this.composer?.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.fitCamera.aspect = width / height;
@@ -1024,13 +1169,15 @@ export class FieldScene {
         // the extra smoothing already applied to the robot mesh.
         const heading = robot.target.heading;
         const forward = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
-        // Keep the chase camera inside the perimeter so it never clips the
-        // alliance wall or the end signage when a robot backs into a corner.
-        target.copy(pos).addScaledVector(forward, -3.1).add(new THREE.Vector3(0, 1.72, 0));
-        target.x = clamp(target.x, 0.35, field.length - 0.35);
-        target.z = clamp(target.z, 0.35, field.width - 0.35);
-        look.copy(pos).addScaledVector(forward, 4.6).add(new THREE.Vector3(0, 0.5, 0));
-        desiredFov = 60;
+        // Sit high enough to see over the walls and the HUB backboards, and far
+        // enough back that the frame is the field rather than a close-up of the
+        // nearest structure. A little outside the walls is fine and keeps the
+        // shot from jumping when a robot backs into a corner.
+        target.copy(pos).addScaledVector(forward, -4.9).add(new THREE.Vector3(0, 2.85, 0));
+        target.x = clamp(target.x, -0.9, field.length + 0.9);
+        target.z = clamp(target.z, -0.9, field.width + 0.9);
+        look.copy(pos).addScaledVector(forward, 6.4).add(new THREE.Vector3(0, 0.55, 0));
+        desiredFov = 58;
         chase = true;
       }
     }
@@ -1086,11 +1233,28 @@ export class FieldScene {
     }
   }
 
+  /** Shed pixel ratio, then bloom, if this machine cannot hold a smooth frame. */
+  private adaptQuality(frameSeconds: number): void {
+    if (!Number.isFinite(frameSeconds) || frameSeconds <= 0) return;
+    if (frameSeconds > 1 / 26) this.slowFrames += 1;
+    else this.slowFrames = 0;
+    if (this.slowFrames < 40) return;
+    this.slowFrames = 0;
+    if (this.renderer.getPixelRatio() > 1.01) {
+      this.renderer.setPixelRatio(1);
+      this.resize();
+      return;
+    }
+    if (this.postEnabled) this.postEnabled = false;
+  }
+
   private animate = (): void => {
     const now = performance.now();
-    const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
+    const raw = (now - this.lastFrame) / 1000;
+    const dt = Math.min(0.05, raw);
     this.lastFrame = now;
     this.elapsed += dt;
+    this.adaptQuality(raw);
     const smooth = 1 - Math.exp(-10 * dt);
     for (const robot of this.robots.values()) {
       const group = robot.visual.group;
@@ -1132,12 +1296,17 @@ export class FieldScene {
     this.fuelMesh.count = count;
     this.fuelMesh.instanceMatrix.needsUpdate = true;
     this.updateCamera(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.postEnabled && this.composer) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
   };
 
   dispose(): void {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
+    this.composer?.dispose();
+    this.bloom?.dispose();
+    this.composer = null;
+    this.bloom = null;
     for (const robot of this.robots.values()) robot.visual.dispose();
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Sprite)) return;

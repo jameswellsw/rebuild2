@@ -25,6 +25,8 @@ same room.
   unlimited custom builds.
 - **Field Lab** — top-down editor with snap-to-grid placement for HUBs, TOWERs, OUTPOSTs, FUEL
   spawns, rails and starting positions. Every field is JSON and can be played in solo or rooms.
+  The default arena is a 28 m × 14 m playfield: real-size robots, HUBs and TOWERs on an expanded
+  carpet, so there is room to drive instead of a cramped 54 ft box.
 - **Solo offline** — the same deterministic simulation runs in the browser. After the first load the
   PWA service worker keeps the shell and assets available with no connection.
 - **Touch + keyboard** — on-screen joystick, rotate pad and one-tap mechanisms; WASD, Q/E, Space,

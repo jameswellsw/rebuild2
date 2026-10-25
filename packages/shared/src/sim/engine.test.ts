@@ -120,12 +120,14 @@ describe('REBUILT match simulation', () => {
     const engine = makeEngine(setup);
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
     const blue = engine.state.robots.find((r) => r.id === 'blue-bot')!;
-    // Red is lighter and trapped against Blue, which is driving into it.
-    red.x = 2;
-    red.y = 4;
+    // Red is lighter and squeezed between Blue and the alliance wall, which is
+    // the only way a held robot counts as pinned rather than merely pushed.
+    const midY = REBUILT_FIELD.size.width / 2;
+    red.x = red.radius + 0.07;
+    red.y = midY;
     red.heading = 0;
-    blue.x = 2 + red.radius + blue.radius - 0.02;
-    blue.y = 4;
+    blue.x = red.x + red.radius + blue.radius - 0.02;
+    blue.y = midY;
     blue.heading = Math.PI;
     engine.setInput('red-bot', input({ moveY: 1, actions: { ...input().actions } }));
     engine.setInput('blue-bot', input({ moveY: 1, actions: { ...input().actions } }));
@@ -168,8 +170,9 @@ describe('REBUILT match simulation', () => {
     setup.robots[0].bot = config;
     const engine = makeEngine(setup);
     const red = engine.state.robots[0];
-    red.x = 4.3;
-    red.y = 4.1;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    red.x = hub.x - 1.7;
+    red.y = hub.y;
     engine.setInput('red-bot', input({ actions: { ...input().actions, expand: true } }));
     advance(engine, 1.5);
     const ev = engine.state.events.find((e) => e.ruleId === 'G413');
