@@ -63,7 +63,7 @@ export function computeAIInput(
     config.climber.enabled &&
     ((endgame && state.timeRemaining < 28) || (state.phase === 'auto' && state.timeRemaining > 0 && state.timeRemaining < 3));
 
-  if (wantsClimb && (robot.climb.level > 0 || distToTower < 5.5)) {
+  if (wantsClimb && (robot.climb.level > 0 || distToTower < 3.4)) {
     const maxLevel = state.phase === 'auto' ? 1 : config.climber.maxLevel;
     if (robot.climb.level >= maxLevel) {
       input.actions.climb = true;
@@ -111,7 +111,7 @@ export function computeAIInput(
     const steer = toward(robot, hub.x, hub.y, 0.9);
     // Hold a shooting stand-off instead of driving into the HUB and wedging
     // there while waiting for the HUB to become active again.
-    input.moveY = robot.climb.level > 0 || distToHub < 2.4 ? 0 : steer.moveY;
+    input.moveY = robot.climb.level > 0 || distToHub < 1.9 ? 0 : steer.moveY;
     input.rotate = steer.rotate;
     input.actions.intake = true;
     return input;
@@ -153,7 +153,7 @@ export function aiHumanShouldFeed(state: MatchState, alliance: 'red' | 'blue'): 
   const loose = state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length;
   const human = state.humans.find((h) => h.alliance === alliance);
   if (!human || human.feedCooldown > 0) return false;
-  return loose < 85 && human.storage >= 3;
+  return loose < 70 && human.storage >= 3;
 }
 
 export function normalizedDirection(dx: number, dy: number): { x: number; y: number } {

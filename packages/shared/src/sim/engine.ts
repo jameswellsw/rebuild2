@@ -31,6 +31,7 @@ import type {
 } from '../types.js';
 import { computeAIInput } from './ai.js';
 import {
+  bumpSlopeAt,
   getHub,
   getTower,
   outpostFeedPoint,
@@ -122,6 +123,8 @@ export class MatchEngine {
   private teleopTowerScored = false;
   private hubPatternDecided = false;
   private readonly fuelCeiling: number;
+  /** Loose FUEL staged at kickoff, used to decide when the HP tops the field up. */
+  private readonly startingFuel: number;
   private readonly tippedAt = new Map<string, number>();
   private readonly omega = new Map<string, number>();
 
@@ -130,6 +133,7 @@ export class MatchEngine {
     this.setup = clone(setup);
     this.field = this.setup.field;
     this.fuelCeiling = fuelCeilingFor(this.field);
+    this.startingFuel = this.field.fuelSpawns.reduce((total, spawn) => total + spawn.count, 0);
     this.startedAt = options.startedAt ?? Date.now();
     this.rng = new Rng(this.setup.seed >>> 0);
     if (options.skipCountdown) this.countdown = 0;
@@ -152,7 +156,8 @@ export class MatchEngine {
         name: setupHuman?.displayName ?? `${alliance === 'red' ? 'Red' : 'Blue'} human player`,
         controller: setupHuman?.controller ?? 'ai',
         holding: 0,
-        storage: 12,
+        // §6.3.4: 24 FUEL are staged in each OUTPOST CHUTE at kickoff.
+        storage: 24,
         feedCooldown: 0,
         reach: 0,
         warningGiven: false,
@@ -236,8 +241,8 @@ export class MatchEngine {
       for (let i = 0; i < spawn.count; i++) {
         const theta = this.rng.range(0, Math.PI * 2);
         const r = Math.sqrt(this.rng.next()) * spawn.radius;
-        let x = clamp(spawn.x + Math.cos(theta) * r, 0.5, this.field.size.length - 0.5);
-        let y = clamp(spawn.y + Math.sin(theta) * r, 0.5, this.field.size.width - 0.5);
+        let x = clamp(spawn.x + Math.cos(theta) * r, BALL_RADIUS, this.field.size.length - BALL_RADIUS);
+        let y = clamp(spawn.y + Math.sin(theta) * r, BALL_RADIUS, this.field.size.width - BALL_RADIUS);
         // Keep loose FUEL out of solid HUB footprints.
         for (const hub of this.field.hubs) {
           const rect = this.hubRectFor(hub);
@@ -545,6 +550,25 @@ export class MatchEngine {
       const nextOmega = omega + clamp(targetOmega - omega, -angularAccel * dt, angularAccel * dt);
       this.omega.set(robot.id, nextOmega);
       robot.heading = (robot.heading + nextOmega * dt + Math.PI * 4) % (Math.PI * 2);
+      // BUMPs are real ramps, not paint: crossing one costs momentum on the
+      // way up and gives it back on the way down (§5.5, 15° HDPE).
+      const slope = bumpSlopeAt(this.field, robot.x, robot.y);
+      if (slope.x !== 0 || slope.y !== 0) {
+        const grade = Math.hypot(slope.x, slope.y);
+        // Moving against the gradient is a climb; with it is a descent.
+        const climbing = robot.vx * slope.x + robot.vy * slope.y > 0;
+        const pull = climbing ? 3.4 : 2.1;
+        robot.vx -= slope.x * pull * dt;
+        robot.vy -= slope.y * pull * dt;
+        // Wheels lose a little bite on the incline, so the climb is slower
+        // than a flat run at the same throttle.
+        const cap = climbing ? setup.bot.stats.maxSpeed / (1 + grade * 1.15) : setup.bot.stats.maxSpeed;
+        const speed = Math.hypot(robot.vx, robot.vy);
+        if (speed > cap) {
+          robot.vx = (robot.vx / speed) * cap;
+          robot.vy = (robot.vy / speed) * cap;
+        }
+      }
       robot.x += robot.vx * dt;
       robot.y += robot.vy * dt;
     }
@@ -797,14 +821,16 @@ export class MatchEngine {
     const targetY = hub.y;
     const spread = (1 - bot.shooter.accuracy) * 0.5;
     const aimAngle = Math.atan2(targetY - robot.y, targetX - robot.x) + this.rng.range(-spread, spread);
-    const targetZ = this.game.hub.rimHeight + 0.18;
+    // Aim above the funnel rim so the ball clears the HUB's side wall and drops
+    // through the opening instead of bouncing off the panels below it.
+    const targetZ = this.game.hub.rimHeight + 0.35;
     const speed = targetDist / time;
     const vx = Math.cos(aimAngle) * speed;
     const vy = Math.sin(aimAngle) * speed;
-    // Launch above the rim: a ball leaving the shooter at chassis height was
-    // caught by the HUB's own side wall on close-range shots, which is why so
-    // many shots bounced out instead of dropping through the opening.
-    const startZ = this.game.hub.rimHeight + 0.12;
+    // The ball leaves the robot's shooter, roughly a half meter off the carpet.
+    // The 2026 HUB opening sits at 72 in, so shots are long arcs; spawning them
+    // above the rim made them appear out of thin air over the robot.
+    const startZ = 0.72;
     const vz = (targetZ - startZ) / time + 0.5 * GRAVITY * time;
     const startX = robot.x + Math.cos(robot.heading) * (robot.radius * 0.7);
     const startY = robot.y + Math.sin(robot.heading) * (robot.radius * 0.7);
@@ -844,6 +870,12 @@ export class MatchEngine {
       if (fuel.state === 'field') {
         fuel.vx *= Math.exp(-1.6 * dt);
         fuel.vy *= Math.exp(-1.6 * dt);
+        // Loose FUEL rolls down the BUMP ramps instead of sitting on them.
+        const slope = bumpSlopeAt(this.field, fuel.x, fuel.y);
+        if (slope.x !== 0 || slope.y !== 0) {
+          fuel.vx -= slope.x * 5.4 * dt;
+          fuel.vy -= slope.y * 5.4 * dt;
+        }
         fuel.x += fuel.vx * dt;
         fuel.y += fuel.vy * dt;
         fuel.z = BALL_RADIUS;
@@ -1054,7 +1086,9 @@ export class MatchEngine {
   private updateHumans(dt: number): void {
     for (const human of this.state.humans) {
       human.feedCooldown = Math.max(0, human.feedCooldown - dt);
-      human.storage = Math.min(this.game.possession.storageMax, human.storage + dt * 1.35);
+      // FUEL reaches the chute from the CORRAL, so the top-up is slow: the
+      // human player can empty their chute faster than it refills.
+      human.storage = Math.min(this.game.possession.storageMax, human.storage + dt * 0.5);
       const input = this.humanInputs.get(human.alliance);
       if (human.controller === 'human') {
         human.reach = input?.reach ?? 0;
@@ -1063,7 +1097,7 @@ export class MatchEngine {
         human.reach = 0;
         if (this.state.phase !== 'countdown' && this.state.phase !== 'post') {
           const loose = this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length;
-          if (loose < this.fuelCeiling * 0.72 && human.feedCooldown <= 0 && human.storage >= 3) this.feedHuman(human);
+          if (loose < this.startingFuel * 0.55 && human.feedCooldown <= 0 && human.storage >= 3) this.feedHuman(human);
         }
       }
     }

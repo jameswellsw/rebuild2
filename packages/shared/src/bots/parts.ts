@@ -21,7 +21,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 8,
     mass: 15,
     description: 'Short wheelbase, quick to turn, less space for fuel.',
-    stats: '28" × 24" × 12" · 15 kg base',
+    stats: '25.6" × 24" × 12.6" · 15 kg base',
   },
   {
     id: 'chassis-standard',
@@ -30,7 +30,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 10,
     mass: 20,
     description: 'The balanced kit-bot frame. Fits a wide intake and a flywheel.',
-    stats: '31" × 24" × 16" · 20 kg base',
+    stats: '27" × 27" × 16.5" · 20 kg base',
   },
   {
     id: 'chassis-heavy',
@@ -39,7 +39,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 14,
     mass: 30,
     description: 'Heavy rail frame. Hard to push, slower to change direction.',
-    stats: '33" × 21" × 18" · 30 kg base',
+    stats: '28.1" × 26.6" × 18.1" · 30 kg base',
   },
   {
     id: 'chassis-low',
@@ -48,7 +48,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 9,
     mass: 17,
     description: 'Low CG, easy to fit under the HUB rim. No tall mechanisms.',
-    stats: '30" × 23" × 10" · 17 kg base',
+    stats: '27.6" × 26" × 10.2" · 17 kg base',
   },
   { id: 'drive-none', name: 'No drivetrain', slot: 'drive', cost: 0, mass: 0, description: 'For a static test rig.', stats: '0 m/s' },
   {
@@ -223,14 +223,16 @@ export const PART_BY_ID: Record<string, PartDefinition> = Object.fromEntries(
   PART_CATALOG.map((p) => [p.id, p]),
 );
 
+// A competitive REBUILT baseline rather than a kit bot: square swerve frame,
+// full-width floor intake, flywheel launcher and a TOWER climber.
 export const DEFAULT_PARTS: RobotPart[] = [
   { slot: 'chassis', partId: 'chassis-standard' },
-  { slot: 'drive', partId: 'drive-tank' },
-  { slot: 'intake', partId: 'intake-roller' },
+  { slot: 'drive', partId: 'drive-swerve' },
+  { slot: 'intake', partId: 'intake-wide' },
   { slot: 'shooter', partId: 'shooter-flywheel' },
   { slot: 'climber', partId: 'climber-basic' },
   { slot: 'arm', partId: 'arm-none' },
-  { slot: 'sensor', partId: 'sensor-basic' },
+  { slot: 'sensor', partId: 'sensor-vision' },
 ];
 
 export const PART_BUDGET = 110;
@@ -271,11 +273,13 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
 
   switch (part.slot) {
     case 'chassis': {
+      // Every frame here fits R104's 110 in perimeter. The standard frame is
+      // the 27 x 27 in square that both 254 and 1678 ran in 2026.
       const dims: Record<string, [number, number, number, number]> = {
-        'chassis-compact': [0.72, 0.62, 0.3, 15],
-        'chassis-standard': [0.78, 0.6, 0.4, 20],
-        'chassis-heavy': [0.85, 0.54, 0.46, 30],
-        'chassis-low': [0.76, 0.58, 0.25, 17],
+        'chassis-compact': [0.65, 0.61, 0.32, 15],
+        'chassis-standard': [0.686, 0.686, 0.42, 20],
+        'chassis-heavy': [0.715, 0.675, 0.46, 30],
+        'chassis-low': [0.7, 0.66, 0.26, 17],
       };
       const d = dims[partId];
       if (d) next.chassis = { length: d[0], width: d[1], height: d[2], mass: 0 };

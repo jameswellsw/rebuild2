@@ -45,7 +45,8 @@ export const REBUILT_2026: GameDefinition = {
   presentedBy: 'Haas',
   season: 2026,
   sourceUrl: 'https://firstfrc.blob.core.windows.net/frc2026/Manual/2026GameManual.pdf',
-  field: { length: 16.46, width: 8.23, wallHeight: 1.04, centerLine: 8.23 },
+  // 651.2 in x 317.7 in of carpet inside 20 in guardrails (manual §5.1, §5.2).
+  field: { length: 16.54, width: 8.07, wallHeight: 0.508, centerLine: 8.27 },
   timing: { countdown: 3, auto: 20, transition: 10, shift: 25, shifts: 4, endgame: 30, total: 160 },
   scoring: {
     fuel: 1,
@@ -58,7 +59,8 @@ export const REBUILT_2026: GameDefinition = {
   pinning: { limitSeconds: 3, incrementSeconds: 3, resetDistance: 1.8288, resetHoldSeconds: 3 },
   expansion: { maxBeyondPerimeter: 0.3048, maxHeight: 0.762, maxPerimeter: 2.794 },
   possession: { preloadMax: 8, controlMax: null, humanHoldingMax: 2, storageMax: 24 },
-  hub: { rimHeight: 0.92, openingRadius: 0.62, ejectCooldown: 1.5 },
+  // 41.7 in hexagonal opening whose front edge is 72 in above the carpet (§5.4).
+  hub: { rimHeight: 1.83, openingRadius: 0.62, ejectCooldown: 1.5 },
   climb: { autoSecondsPerLevel: 1.6, teleopSecondsPerLevel: 1.15, maxAutoLevel: 1 },
   rulesVersion: 'TU22',
   rulesUpdated: '2026-04-14',

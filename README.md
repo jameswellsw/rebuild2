@@ -25,8 +25,34 @@ same room.
   unlimited custom builds.
 - **Field Lab** — top-down editor with snap-to-grid placement for HUBs, TOWERs, OUTPOSTs, FUEL
   spawns, rails and starting positions. Every field is JSON and can be played in solo or rooms.
-  The default arena is a 28 m × 14 m playfield: real-size robots, HUBs and TOWERs on an expanded
-  carpet, so there is room to drive instead of a cramped 54 ft box.
+  The default arena is the regulation REBUILT carpet — 651.2 in × 317.7 in (16.54 m × 8.07 m) —
+  built from the real elements: 47 in square
+  HUBs with a 41.7 in hexagonal opening at 72 in, black HDPE funnels, DMX-lit rims and a net
+  backstop, drivable 15° orange-peel BUMPs butted against each HUB, drive-through TRENCHes with
+  their 50.34 in × 22.25 in clear opening, DEPOTs on the alliance walls, three-rung TOWERs between
+  driver stations 2 and 3, OUTPOST chutes and corrals, all 32 36h11 AprilTags in their 2026
+  positions, 20 in polycarbonate guardrails and 2 in gaffer-tape markings on Neyland II
+  "Medallion" carpet. Nothing is scaled: the HUBs sit 158.6 in in from their alliance walls, the
+  BUMPs are 73 in × 44.4 in × 6.513 in with their ramps toward both zones, each TRENCH runs from
+  a guardrail inboard to its BUMP, and the ALLIANCE ZONE is the manual's 158.6 in deep, ending at
+  the alliance-coloured ROBOT STARTING LINE that emerges from under each HUB. FUEL is staged the
+  way §6.3.4 stages it: one piled arrangement in the NEUTRAL ZONE split across the CENTER LINE,
+  24 FUEL in each DEPOT and 24 in each human player's OUTPOST chute. The BUMPs are physical
+  ramps too — a robot loses momentum climbing one and gets it back on the far side, and loose
+  FUEL rolls off them.
+- **An arena, not a diorama** — the field sits inside a venue: 20 in clear polycarbonate guardrails
+  with four shielded 38 in gates and bolted corner posts, team signs and the §5.9.1 LED stacks at
+  every driver station plus the match clock in DRIVER STATION 2, stands on both long
+  sides, an overhead truss whose angled fixtures throw visible pools onto the carpet, live video
+  boards showing the clock and score, and the people who actually stand round a field — a head
+  referee in yellow, an FTA with a tablet and reset crew in vests. The carpet carries its roll
+  seam, gaffer-taped repairs and rubber scuffs, and the TRENCHes differ by side: the electronics
+  cabinet along the scoring table, the pivoting arm on the other, exactly as §5.6 describes.
+- **Robots that look like robots** — a 27 in square swerve frame (or a six-wheel tank base) that
+  fits the 110 in perimeter rule, 4.5 in fabric bumpers whose numbers meet R401's 3.75 in minimum
+  on every side, a full-width floor intake, a
+  polycarbonate hopper with visible FUEL, a drum shooter with a hood, a rear climber with a hook,
+  battery and electronics, alliance LEDs and a status beacon.
 - **Solo offline** — the same deterministic simulation runs in the browser. After the first load the
   PWA service worker keeps the shell and assets available with no connection.
 - **Touch + keyboard** — on-screen joystick, rotate pad and one-tap mechanisms; WASD, Q/E, Space,

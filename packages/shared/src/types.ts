@@ -146,6 +146,46 @@ export interface FuelSpawn {
   radius: number;
 }
 
+/**
+ * Drivable 15° HDPE ramps that flank each HUB (2026 REBUILT BUMPs).
+ * `depth` runs along the field length (the two ramps), `width` across it.
+ */
+export interface FieldBump {
+  id: string;
+  alliance: Alliance;
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+  height: number;
+}
+
+/**
+ * Overhead structures running from a guardrail inboard to a BUMP (2026
+ * REBUILT TRENCHes). `width` is the extent across the field, `depth` the
+ * extent along it, and robots drive through along the field.
+ */
+export interface FieldTrench {
+  id: string;
+  alliance: Alliance;
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+  height: number;
+}
+
+/** Low FUEL corral against the alliance wall (2026 REBUILT DEPOT). */
+export interface FieldDepot {
+  id: string;
+  alliance: Alliance;
+  x: number;
+  y: number;
+  rotation: number;
+  width: number;
+  depth: number;
+}
+
 export interface FieldBarrier {
   id: string;
   x: number;
@@ -169,6 +209,12 @@ export interface FieldLayout {
   outposts: FieldOutpost[];
   fuelSpawns: FuelSpawn[];
   barriers: FieldBarrier[];
+  /** Drivable HDPE ramps beside each HUB. Optional for older layouts. */
+  bumps?: FieldBump[];
+  /** Overhead sideline structures. Optional for older layouts. */
+  trenches?: FieldTrench[];
+  /** FUEL corrals along the alliance walls. Optional for older layouts. */
+  depots?: FieldDepot[];
   startingPositions: Record<Alliance, Array<{ x: number; y: number; heading: number }>>;
   /** Optional custom field marker for the editor UI. */
   custom?: boolean;
