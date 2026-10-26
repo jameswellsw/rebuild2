@@ -225,9 +225,10 @@ export class FieldScene {
     this.addRobots();
 
     const staged = this.field.fuelSpawns.reduce((n, s) => n + s.count, 0);
-    // The HP can top the field back up to the engine's ceiling, so leave room
-    // for the recycled FUEL as well as the kickoff staging.
-    const maxFuel = Math.min(420, Math.round(staged * 1.5) + 12);
+    // A regulation match stages 504 FUEL: 360 corralled on the CENTER LINE, 24
+    // in each DEPOT and 24 in each OUTPOST CHUTE. Leave room for the HP topping
+    // the field back up as well as the kickoff staging.
+    const maxFuel = Math.min(640, Math.round(staged * 1.5) + 24);
     // Official FUEL is a 5.91 in (150 mm) yellow foam ball with printed marks.
     this.fuelMesh = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.075, 14, 12),
@@ -236,7 +237,7 @@ export class FieldScene {
         roughness: 0.94,
         metalness: 0.02,
       }),
-      Math.min(280, maxFuel),
+      maxFuel,
     );
     this.fuelMesh.castShadow = false;
     this.fuelMesh.receiveShadow = false;
@@ -2239,10 +2240,12 @@ export class FieldScene {
         // enough back that the frame is the field rather than a close-up of the
         // nearest structure. A little outside the walls is fine and keeps the
         // shot from jumping when a robot backs into a corner.
-        target.copy(pos).addScaledVector(forward, -4.9).add(new THREE.Vector3(0, 2.85, 0));
+        // Close enough that the player's own robot sits in the lower third of
+        // the frame, high enough to see over the 72 in HUB opening ahead.
+        target.copy(pos).addScaledVector(forward, -4.4).add(new THREE.Vector3(0, 2.3, 0));
         target.x = clamp(target.x, -0.9, field.length + 0.9);
         target.z = clamp(target.z, -0.9, field.width + 0.9);
-        look.copy(pos).addScaledVector(forward, 6.4).add(new THREE.Vector3(0, 0.55, 0));
+        look.copy(pos).addScaledVector(forward, 5.4).add(new THREE.Vector3(0, 0.9, 0));
         desiredFov = 58;
         chase = true;
       }

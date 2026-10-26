@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import type { RobotConfig, RobotSnapshot } from '@rebuilt/shared';
-import { makeBumperTexture, makeContactShadowTexture, makeNetTexture, makePolyPanelTexture } from './textures';
+import {
+  makeBumperTexture,
+  makeContactShadowTexture,
+  makeFuelTexture,
+  makeNetTexture,
+  makePolyPanelTexture,
+} from './textures';
 
 export interface RobotVisual {
   group: THREE.Group;
@@ -118,10 +124,12 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   disposables.push(panelTex);
   const panelMat = new THREE.MeshStandardMaterial({
     map: panelTex,
-    roughness: 0.42,
-    metalness: 0.2,
+    roughness: 0.28,
+    metalness: 0.15,
     transparent: true,
-    opacity: 0.86,
+    // Clear polycarbonate, not frosted acrylic: the drive team has to see the
+    // FUEL load through the hopper wall.
+    opacity: 0.34,
   });
   disposables.push(panelMat);
   const netTex = makeNetTexture();
@@ -163,13 +171,18 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   }
 
   const wheels: THREE.Mesh[] = [];
-  const wheelGeo = geo(new THREE.CylinderGeometry(0.051, 0.051, 0.048, 16));
-  const hubGeo = geo(new THREE.CylinderGeometry(0.026, 0.026, 0.054, 12));
+  const swerve = config.drive === 'swerve';
+  // Real wheel sizes: SDS modules run a 4 in x 1.5 in wheel, a classic tank
+  // base runs 6 in x 1.5 in. Wheel diameter is what makes the robot's stance
+  // read correctly next to 5.91 in FUEL, so neither is fudged.
+  const wheelRadius = swerve ? 0.0508 : 0.0762;
+  const wheelGeo = geo(new THREE.CylinderGeometry(wheelRadius, wheelRadius, swerve ? 0.038 : 0.038, 18));
+  const hubGeo = geo(new THREE.CylinderGeometry(0.026, 0.026, 0.046, 12));
   // The holder lays the cylinder on its side (axle along Z) so the mesh itself
   // can spin about its own axis with rotation.y, exactly like a real wheel.
   const addWheel = (x: number, z: number, parent: THREE.Object3D) => {
     const holder = new THREE.Group();
-    holder.position.set(x, 0.051, z);
+    holder.position.set(x, wheelRadius, z);
     holder.rotation.x = Math.PI / 2;
     parent.add(holder);
     const wheel = new THREE.Mesh(wheelGeo, rubber);
@@ -181,62 +194,85 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
     return holder;
   };
 
-  const swerve = config.drive === 'swerve';
   const spinGroup = new THREE.Group();
   attitude.add(spinGroup);
   if (swerve) {
-    // Four corner modules: fork, 4 in wheel, steering ring and two Krakens.
+    // Four SDS MK5n modules. The plate is 5 in across and 7.5 in along the
+    // frame, carries a corner-biased 4 in wheel under a bevel-gear stack, and
+    // has a Kraken X60 on each axis. Nothing here is a generic box.
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        const x = sx * (frameL / 2 - 0.085);
-        const z = sz * (frameW / 2 - 0.075);
-        box(machineAlu, 0.155, 0.05, 0.155, x, 0.196, z);
-        box(aluminium, 0.17, 0.014, 0.17, x, 0.226, z);
+        const x = sx * (frameL / 2 - 0.105);
+        const z = sz * (frameW / 2 - 0.085);
+        box(machineAlu, 0.19, 0.014, 0.127, x, 0.202, z);
+        // Chassis mounting flanges along the 7.5 in axis.
+        for (const dz of [-0.05, 0.05]) {
+          box(aluminium, 0.19, 0.03, 0.014, x, 0.186, z + dz);
+        }
+        // Steering bearing the module rotates on.
+        const bearing = cylinder(machineAlu, 0.046, 0.016, x, 0.18, z, attitude, 22);
+        void bearing;
         const fork = new THREE.Group();
         fork.position.set(x, 0, z);
         attitude.add(fork);
-        for (const dz of [-0.05, 0.05]) {
-          box(machineAlu, 0.13, 0.1, 0.014, 0, 0.115, dz, fork);
+        for (const dz of [-0.028, 0.028]) {
+          box(machineAlu, 0.115, 0.1, 0.009, 0, 0.115, dz, fork);
         }
-        addWheel(0, 0, fork);
+        // Bevel gear and axle between the fork plates.
+        const bevel = cylinder(dark, 0.024, 0.052, 0, 0.16, 0, fork, 12);
+        bevel.rotation.x = Math.PI / 2;
+        addWheel(sx * 0.026, 0, fork);
         assemblyForward(fork, sx);
-        // Drive and steer motors standing on the module plate.
-        cylinder(dark, 0.034, 0.075, x - sx * 0.05, 0.245, z + sz * 0.045, attitude, 12);
-        cylinder(aluminium, 0.026, 0.02, x - sx * 0.05, 0.288, z + sz * 0.045, attitude, 10);
-        cylinder(dark, 0.03, 0.06, x + sx * 0.045, 0.245, z - sz * 0.045, attitude, 10);
+        // Drive motor lying along the frame, steering motor upright, both 2.37
+        // in across, with the Talon FX end cap facing out.
+        const drive = cylinder(dark, 0.03, 0.075, x + sx * 0.058, 0.238, z, attitude, 14);
+        drive.rotation.z = Math.PI / 2;
+        const driveCap = cylinder(secondaryMat, 0.031, 0.008, x + sx * 0.099, 0.238, z, attitude, 14);
+        driveCap.rotation.z = Math.PI / 2;
+        cylinder(dark, 0.03, 0.075, x - sx * 0.05, 0.238, z - sz * 0.03, attitude, 14);
+        cylinder(secondaryMat, 0.031, 0.008, x - sx * 0.05, 0.278, z - sz * 0.03, attitude, 14);
+        // Steering encoder tucked into the module plate.
+        box(black, 0.028, 0.018, 0.028, x, 0.214, z + sz * 0.038);
       }
     }
   } else {
-    // Tank / mecanum base: side rails, three wheels a side on a dropped
-    // centre, chain guards and two motors lying along each rail.
+    // Tank / mecanum base: 2 x 1 in rails, three 6 in wheels a side on a
+    // dropped centre, a chain run behind a guard and a gearbox on each side.
     for (const sz of [-1, 1]) {
-      box(machineAlu, frameL * 0.94, 0.016, 0.2, 0, 0.185, sz * (frameW / 2 - 0.1));
-      box(machineAlu, frameL * 0.94, 0.05, 0.02, 0, 0.11, sz * (frameW / 2 - 0.05));
-      for (const dx of [-0.32, 0, 0.32]) {
+      box(machineAlu, frameL * 0.96, 0.016, 0.2, 0, 0.2, sz * (frameW / 2 - 0.1));
+      box(machineAlu, frameL * 0.94, 0.05, 0.02, 0, 0.13, sz * (frameW / 2 - 0.05));
+      for (const dx of [-0.33, 0, 0.33]) {
         const fork = new THREE.Group();
         fork.position.set(dx * frameL, 0, sz * (frameW / 2 - 0.04));
         attitude.add(fork);
         addWheel(0, 0, fork);
       }
-      box(dark, frameL * 0.5, 0.06, 0.03, 0, 0.155, sz * (frameW / 2 - 0.015));
-      const motor = cylinder(dark, 0.032, 0.09, -frameL * 0.2, 0.2, sz * (frameW / 2 - 0.15), attitude, 12);
+      // Chain run between the wheels, behind a black guard.
+      box(black, frameL * 0.74, 0.045, 0.02, 0, 0.11, sz * (frameW / 2 - 0.015));
+      for (let i = -2; i <= 2; i++) {
+        box(rubber, 0.012, 0.03, 0.024, i * frameL * 0.13, 0.11, sz * (frameW / 2 - 0.015));
+      }
+      // Gearbox and a pair of NEOs along the rail.
+      box(machineAlu, 0.11, 0.1, 0.07, -frameL * 0.18, 0.19, sz * (frameW / 2 - 0.14));
+      const motor = cylinder(dark, 0.03, 0.062, -frameL * 0.06, 0.2, sz * (frameW / 2 - 0.145), attitude, 12);
       motor.rotation.z = Math.PI / 2;
-      const motor2 = cylinder(machineAlu, 0.03, 0.08, -frameL * 0.06, 0.2, sz * (frameW / 2 - 0.15), attitude, 12);
+      const motor2 = cylinder(dark, 0.03, 0.062, frameL * 0.06, 0.2, sz * (frameW / 2 - 0.145), attitude, 12);
       motor2.rotation.z = Math.PI / 2;
     }
     box(black, 0.3, 0.02, frameW - 0.05, 0, 0.09, 0);
   }
 
-  // Bumpers: 4.5 in of covered foam reaching from ~1.25 in to 5.75 in off the
-  // carpet, on a hard backer. This band is the most recognisable part of an
-  // FRC robot, so it gets the number and the stitched hems.
+  // Bumpers per R402-R412: 4.5 in of covered foam on a hard backer, filling
+  // the R405 zone from 2.5 to 5.75 in off the carpet, extending 2.28 in past
+  // the frame (R403 caps it at 4 in). The number is printed on every face so
+  // the robot satisfies R412's three-locations-90-degrees-apart rule.
   const bumperTex = makeBumperTexture(config.teamNumber, alliance, config.name);
   disposables.push(bumperTex);
   const bumperFaceMat = new THREE.MeshStandardMaterial({ map: bumperTex, roughness: 0.88, metalness: 0.02 });
   disposables.push(bumperFaceMat);
   const bumperThick = 0.058;
-  const bumperH = 0.114;
-  const bumperY = 0.089;
+  const bumperH = 0.1143;
+  const bumperY = 0.0892;
   const extendX = L / 2 + bumperThick / 2;
   const extendZ = W / 2 + bumperThick / 2;
   // Box material order is [+x, -x, +y, -y, +z, -z]. Only the outward face
@@ -273,96 +309,160 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   }
 
   // ------------------------------------------------------------- electronics
-  // Battery brick, power distribution hub, roboRIO, radio and the motor
-  // controllers, all low in the frame with the battery leads running to them.
-  box(black, 0.2, 0.13, 0.16, -0.16, 0.2, frameW * 0.22);
-  box(mat('#2a2f38', { metalness: 0.4 }), 0.204, 0.02, 0.164, -0.16, 0.27, frameW * 0.22, attitude);
-  box(mat('#b03a2c', { roughness: 0.7 }), 0.02, 0.02, 0.03, -0.05, 0.24, frameW * 0.22);
-  strut(mat('#b03a2c', { roughness: 0.7 }), -0.06, 0.25, frameW * 0.22, 0.02, 0.19, frameW * 0.1, 0.012);
-  strut(black, -0.06, 0.22, frameW * 0.25, 0.04, 0.17, frameW * 0.12, 0.012);
-  box(mat('#1d232b', { metalness: 0.45 }), 0.09, 0.05, 0.17, 0.02, 0.19, -frameW * 0.24);
-  box(mat('#8a939e', { metalness: 0.7, roughness: 0.35 }), 0.07, 0.06, 0.12, 0.12, 0.185, -frameW * 0.18);
-  box(dark, 0.05, 0.045, 0.09, -0.02, 0.185, frameW * 0.02);
+  // The 2026 electronics stack at its real envelopes: an MK ES17-12 battery
+  // (7.1 x 3.0 x 6.6 in), a 120 A main breaker, a REV Power Distribution Hub
+  // (8.875 x 4.375 x 1.563 in), a roboRIO 2 (5.75 x 5.64 x 1.37 in) and a
+  // VH-109 radio, all on a polycarbonate board low in the frame.
+  // Everything under the 8.7 in hopper floor, stacked the way teams pack it:
+  // battery on the belly pan, electronics board on standoffs above it.
+  const boardY = 0.15;
+  box(black, frameL * 0.56, 0.012, frameW * 0.64, -0.02, boardY, 0);
+  // Battery, low and towards the alliance wall to keep the CG back.
+  box(mat('#20242b', { roughness: 0.6 }), 0.18, 0.076, 0.168, -0.13, 0.128, frameW * 0.22);
+  box(mat('#c0392b', { roughness: 0.7 }), 0.05, 0.006, 0.04, -0.13, 0.169, frameW * 0.22);
+  // 6 AWG leads: red through the breaker, black to the frame ground.
+  strut(mat('#c0392b', { roughness: 0.8 }), -0.06, 0.16, frameW * 0.22, 0.02, 0.17, frameW * 0.1, 0.012);
+  strut(black, -0.2, 0.13, frameW * 0.3, -0.02, 0.11, frameW * 0.12, 0.012);
+  box(mat('#b03a2c', { roughness: 0.7 }), 0.05, 0.045, 0.05, 0.02, 0.17, frameW * 0.1);
+  // PDH flat on the board with its breaker slots facing the battery.
+  box(mat('#1d232b', { metalness: 0.45, roughness: 0.5 }), 0.225, 0.04, 0.111, 0.06, boardY + 0.028, -frameW * 0.18);
+  for (let i = 0; i < 12; i++) {
+    box(accentMat, 0.008, 0.008, 0.012, -0.048 + i * 0.017, boardY + 0.05, -frameW * 0.18 + 0.03);
+  }
+  // roboRIO 2 beside it, with the yellow status LED.
+  box(mat('#8a939e', { metalness: 0.6, roughness: 0.4 }), 0.146, 0.035, 0.143, 0.16, boardY + 0.024, -frameW * 0.06);
+  box(mat('#e0b93a', { roughness: 0.6 }), 0.018, 0.01, 0.03, 0.16, boardY + 0.044, -frameW * 0.06);
+  // VH-109 radio and its Ethernet pigtail.
+  box(mat('#23282f', { roughness: 0.55 }), 0.12, 0.03, 0.1, 0.17, boardY + 0.02, frameW * 0.18);
+  strut(black, 0.17, boardY + 0.04, frameW * 0.18, 0.1, boardY + 0.055, frameW * 0.06, 0.006);
+  // Motor controllers on the frame rails: a Spark MAX per mechanism side.
+  for (const sz of [-1, 1]) {
+    box(mat('#2e7d8f', { roughness: 0.65 }), 0.05, 0.04, 0.075, -0.23, boardY + 0.02, sz * frameW * 0.36);
+  }
   // CAN and power loom, bundled with a zip tie or two.
   strut(black, 0.02, 0.165, -frameW * 0.18, 0.2, 0.165, -frameW * 0.3, 0.012);
-  strut(black, -0.16, 0.24, frameW * 0.3, 0.24, 0.17, frameW * 0.34, 0.013);
-  box(mat('#2e7d8f', { roughness: 0.7 }), 0.02, 0.02, 0.02, 0.1, 0.17, frameW * 0.06);
+  strut(mat('#d7b83a', { roughness: 0.7 }), -0.16, 0.24, frameW * 0.3, 0.24, 0.17, frameW * 0.34, 0.01);
 
   // ------------------------------------------------------------------ intake
+  // A full-width floor intake on linear slides, the arrangement most 2026
+  // robots converged on: two 4 in rollers on green compliant wheels, polycarb
+  // side plates, and up to 12 in of deployment (R105) when it is running.
   const intakeGroup = new THREE.Group();
   attitude.add(intakeGroup);
   let intakeRoller: THREE.Mesh | null = null;
+  const intakeWidth = Math.min(W, Math.max(config.intake.width, W * 0.78));
   if (config.intake.enabled) {
-    const width = Math.min(W * 0.82, config.intake.width);
-    const reach = L / 2 + 0.14;
-    // Pivoting side plates in polycarbonate, roller on compliant wheels.
+    // Stowed, the mouth sits just inside the bumper face; when it runs it
+    // slides 7 in forward. Nothing pokes out of the frame at kickoff.
+    const reach = L / 2 + 0.06;
     for (const sz of [-1, 1]) {
-      const plate = box(panelMat, 0.3, 0.17, 0.008, L / 2 + 0.06, 0.085, sz * (width / 2 + 0.008), intakeGroup);
-      plate.rotation.z = -0.12;
+      // Side plate that runs the full depth of the intake, plus the 2 x 1 in
+      // slide tube it rides on.
+      const plate = box(panelMat, 0.26, 0.14, 0.008, L / 2 - 0.08, 0.085, sz * (intakeWidth / 2 + 0.004), intakeGroup);
+      plate.rotation.z = -0.05;
+      box(aluminium, 0.22, 0.026, 0.026, L / 2 - 0.14, 0.17, sz * (intakeWidth / 2 - 0.02), intakeGroup);
     }
-    box(dark, 0.06, 0.05, width + 0.03, L / 2 + 0.02, 0.135, 0, intakeGroup);
-    const rollerGeoTmp = geo(new THREE.CylinderGeometry(0.032, 0.032, width, 12));
-    intakeRoller = new THREE.Mesh(rollerGeoTmp, mat('#1f242b', { roughness: 0.8 }));
+    box(dark, 0.07, 0.06, intakeWidth + 0.02, L / 2 - 0.06, 0.17, 0, intakeGroup);
+    // Leading roller and the smaller upper roller that kicks FUEL into the
+    // hopper, both on 4 in compliant wheels.
+    const rollerGeo = geo(new THREE.CylinderGeometry(0.035, 0.035, intakeWidth, 14));
+    intakeRoller = new THREE.Mesh(rollerGeo, mat('#1f242b', { roughness: 0.85 }));
     intakeRoller.rotation.x = Math.PI / 2;
     intakeRoller.position.set(reach, 0.05, 0);
     intakeRoller.castShadow = true;
     intakeGroup.add(intakeRoller);
-    // Compliant wheels across the roller face.
-    const compliantMat = mat('#e8a13c', { roughness: 0.78 });
-    const compliantGeo = geo(new THREE.CylinderGeometry(0.038, 0.038, 0.055, 12));
-    for (const i of [-1.5, -0.5, 0.5, 1.5]) {
+    const upperRoller = new THREE.Mesh(
+      geo(new THREE.CylinderGeometry(0.028, 0.028, intakeWidth, 14)),
+      mat('#1f242b', { roughness: 0.85 }),
+    );
+    upperRoller.rotation.x = Math.PI / 2;
+    upperRoller.position.set(reach - 0.1, 0.15, 0);
+    intakeGroup.add(upperRoller);
+    const compliantMat = mat('#2f8f4e', { roughness: 0.8 });
+    const compliantGeo = geo(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 14));
+    // Three wheels on the leading roller, two on the upper one: four green
+    // donuts on each read as a ladder at any distance.
+    for (const frac of [-0.34, 0, 0.34]) {
       const wheel = new THREE.Mesh(compliantGeo, compliantMat);
       wheel.rotation.x = Math.PI / 2;
-      wheel.position.set(reach, 0.06, (i / 2) * (width / 2));
+      wheel.position.set(reach, 0.05, frac * intakeWidth);
       intakeGroup.add(wheel);
     }
-    box(accentMat, 0.02, 0.1, 0.05, reach + 0.02, 0.11, width / 2 + 0.02, intakeGroup);
-    box(accentMat, 0.02, 0.1, 0.05, reach + 0.02, 0.11, -width / 2 - 0.02, intakeGroup);
-    // Linkage back to the pivot.
-    for (const sz of [-1, 1]) {
-      strut(machineAlu, L / 2 + 0.02, 0.15, sz * (width / 2), reach - 0.04, 0.1, sz * (width / 2), 0.016, intakeGroup);
+    for (const frac of [-0.26, 0.26]) {
+      const wheel = new THREE.Mesh(compliantGeo, compliantMat);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(reach - 0.1, 0.15, frac * intakeWidth);
+      intakeGroup.add(wheel);
     }
+    // Sprockets and the short chain on one end of each roller.
+    for (const [rx, ry] of [[reach, 0.05], [reach - 0.11, 0.14]] as const) {
+      const sprocket = new THREE.Mesh(geo(new THREE.CylinderGeometry(0.018, 0.018, 0.012, 10)), aluminium);
+      sprocket.rotation.x = Math.PI / 2;
+      sprocket.position.set(rx, ry, intakeWidth / 2 + 0.02);
+      intakeGroup.add(sprocket);
+    }
+    box(accentMat, 0.02, 0.1, 0.05, reach + 0.02, 0.11, intakeWidth / 2 + 0.03, intakeGroup);
+    box(accentMat, 0.02, 0.1, 0.05, reach + 0.02, 0.11, -intakeWidth / 2 - 0.03, intakeGroup);
   }
 
   // ------------------------------------------------------------------- hopper
-  // Polycarbonate box with a net back wall: the 2026 robots store FUEL low and
-  // wide, so the hopper is the biggest shape above the frame.
-  const hopperFloor = 0.3;
-  const hopperTop = 0.5;
-  box(black, frameL * 0.86, 0.012, frameW * 0.84, 0, hopperFloor, 0);
-  for (const sz of [-1, 1]) {
-    box(panelMat, frameL * 0.84, hopperTop - hopperFloor, 0.008, 0, (hopperTop + hopperFloor) / 2, sz * (frameW / 2 - 0.02));
+  // The net-hopper every 2026 robot ended up building: 1 x 1 in uprights, clear
+  // polycarbonate sides, a belt floor tipped towards the shooter so FUEL feeds
+  // forward, and a net back that lets the drive team see the load.
+  // The hopper body runs from the frame rails up, not from a shelf in mid air:
+  // the clear sides enclose the electronics bay and the load in one volume, the
+  // way a real robot's superstructure does.
+  const hopperBase = railY + 0.02;
+  const hopperFloor = 0.22;
+  const hopperTop = 0.46;
+  const hopperL = frameL * 0.9;
+  const hopperW = frameW * 0.86;
+  const floor = box(black, hopperL, 0.012, hopperW, -0.02, hopperFloor, 0);
+  floor.rotation.z = 0.05;
+  // Two polycord belts running up the floor, plus the indexer at the front.
+  for (const dz of [-0.16, 0.16]) {
+    box(rubber, hopperL * 0.96, 0.004, 0.05, -0.02, hopperFloor + 0.008, dz * hopperW);
   }
-  box(panelMat, 0.008, hopperTop - hopperFloor, frameW * 0.84, -frameL / 2 + 0.02, (hopperTop + hopperFloor) / 2, 0);
-  const netPlane = new THREE.Mesh(geo(new THREE.PlaneGeometry(frameW * 0.8, hopperTop - hopperFloor)), netMat);
-  netPlane.position.set(-frameL / 2 + 0.03, (hopperTop + hopperFloor) / 2, 0);
+  const indexer = cylinder(rubber, 0.026, hopperW * 0.8, -hopperL / 2 + 0.06, hopperFloor + 0.06, 0, attitude, 12);
+  indexer.rotation.x = Math.PI / 2;
+  for (const sz of [-1, 1]) {
+    box(panelMat, hopperL, hopperTop - hopperBase, 0.008, -0.02, (hopperTop + hopperBase) / 2, sz * hopperW / 2);
+    // 1 x 1 in uprights at each corner of the hopper.
+    for (const sx of [-1, 1]) {
+      box(aluminium, 0.026, hopperTop - hopperBase, 0.026, sx * (hopperL / 2) - 0.02, (hopperTop + hopperBase) / 2, sz * hopperW / 2);
+    }
+  }
+  // Polycarbonate front wall above the intake, carrying the team plate.
+  box(panelMat, 0.008, hopperTop - hopperBase, hopperW, hopperL / 2 - 0.02, (hopperTop + hopperBase) / 2, 0);
+  const netPlane = new THREE.Mesh(geo(new THREE.PlaneGeometry(hopperW * 0.92, hopperTop - hopperFloor)), netMat);
+  netPlane.position.set(-hopperL / 2 - 0.01, (hopperTop + hopperFloor) / 2, 0);
   netPlane.rotation.y = Math.PI / 2;
   attitude.add(netPlane);
   // Tension cables over the net, as teams run them to keep FUEL in.
   for (const sz of [-1, 1]) {
-    strut(black, -frameL / 2 + 0.02, hopperTop + 0.02, sz * frameW * 0.3, -frameL * 0.2, hopperTop + 0.05, sz * frameW * 0.34, 0.008);
+    strut(black, -hopperL / 2 + 0.02, hopperTop + 0.02, sz * hopperW * 0.36, -hopperL * 0.2, hopperTop + 0.05, sz * hopperW * 0.4, 0.008);
   }
   // Team plate above the bumper on both flanks.
   const sidePlateGeo = geo(new THREE.PlaneGeometry(0.3, 0.1));
   for (const sz of [-1, 1]) {
     const plate = new THREE.Mesh(sidePlateGeo, primaryMat);
-    plate.position.set(0, 0.38, sz * (frameW / 2 - 0.012));
+    plate.position.set(0, hopperTop - 0.055, sz * (hopperW / 2 + 0.006));
     plate.rotation.y = sz > 0 ? 0 : Math.PI;
     attitude.add(plate);
-    box(accentMat, 0.3, 0.008, 0.006, 0, 0.335, sz * (frameW / 2 - 0.012));
+    box(accentMat, 0.3, 0.008, 0.006, 0, hopperTop - 0.11, sz * (hopperW / 2 + 0.006));
   }
 
   // Skin pattern on the hopper side panels.
   if (config.skin.pattern === 'stripes') {
     for (const sz of [-1, 1]) {
       for (const dx of [-0.1, 0.02, 0.14]) {
-        box(accentMat, 0.05, hopperTop - hopperFloor - 0.02, 0.01, dx, (hopperTop + hopperFloor) / 2, sz * (frameW / 2 - 0.014));
+        box(accentMat, 0.05, hopperTop - hopperFloor - 0.02, 0.01, dx, (hopperTop + hopperFloor) / 2, sz * (hopperW / 2 + 0.002));
       }
     }
   } else if (config.skin.pattern === 'checker') {
     for (const sz of [-1, 1]) {
       for (let i = 0; i < 4; i++) {
-        box(i % 2 === 0 ? accentMat : primaryMat, 0.07, 0.07, 0.01, -0.12 + i * 0.08, hopperTop - 0.06, sz * (frameW / 2 - 0.014));
+        box(i % 2 === 0 ? accentMat : primaryMat, 0.07, 0.07, 0.01, -0.12 + i * 0.08, hopperTop - 0.06, sz * (hopperW / 2 + 0.002));
       }
     }
   } else if (config.skin.pattern === 'hex') {
@@ -371,7 +471,7 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
       for (let i = 0; i < 3; i++) {
         const hex = new THREE.Mesh(hexGeo, accentMat);
         hex.rotation.x = Math.PI / 2;
-        hex.position.set(-0.1 + i * 0.1, hopperTop - 0.07, sz * (frameW / 2 - 0.014));
+        hex.position.set(-0.1 + i * 0.1, hopperTop - 0.07, sz * (hopperW / 2 + 0.002));
         attitude.add(hex);
       }
     }
@@ -384,11 +484,16 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   attitude.add(shooterGroup);
   let drum: THREE.Mesh | null = null;
   if (config.shooter.enabled) {
-    shooterGroup.position.set(0.02, hopperTop + 0.045, 0);
-    shooterGroup.rotation.z = 0.3;
-    box(dark, 0.24, 0.045, frameW * 0.72, 0, 0, 0, shooterGroup);
+    // Drum over the front of the hopper, firing forward over the intake, with
+    // a pedestal down to the hopper rail so it is mounted rather than floating.
+    shooterGroup.position.set(0.14, hopperTop + 0.05, 0);
+    shooterGroup.rotation.z = 0.26;
+    box(machineAlu, 0.18, 0.05, frameW * 0.5, -0.08, -0.055, 0, shooterGroup);
+    // Side plates rather than a solid tray: a shooter is a frame with a drum in
+    // it, and a full-width plate would hide the hopper under it.
     for (const sz of [-1, 1]) {
-      box(aluminium, 0.24, 0.1, 0.012, 0, 0.03, sz * frameW * 0.35, shooterGroup);
+      box(aluminium, 0.26, 0.12, 0.012, 0, 0.01, sz * frameW * 0.35, shooterGroup);
+      box(dark, 0.24, 0.03, 0.03, 0, -0.055, sz * frameW * 0.34, shooterGroup);
     }
     drum = new THREE.Mesh(
       geo(new THREE.CylinderGeometry(0.072, 0.072, frameW * 0.6, 18)),
@@ -419,6 +524,19 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
     for (const sz of [-1, 1]) {
       box(accentMat, 0.02, 0.06, 0.02, 0.13, 0.03, sz * frameW * 0.35, shooterGroup);
     }
+    // Hood pivot and the adjustment screw teams tune shot angle with.
+    for (const sz of [-1, 1]) {
+      box(machineAlu, 0.05, 0.05, 0.012, -0.1, 0.02, sz * frameW * 0.36, shooterGroup);
+    }
+    strut(aluminium, -0.11, 0.02, frameW * 0.3, -0.13, 0.11, frameW * 0.24, 0.006, shooterGroup);
+    // Limelight-style vision camera aimed downfield, with its lens lit.
+    box(dark, 0.06, 0.045, 0.1, 0.1, 0.12, frameW * 0.22, shooterGroup);
+    const vision = new THREE.Mesh(
+      geo(new THREE.SphereGeometry(0.014, 8, 6)),
+      mat('#59e3ff', { emissive: '#147e94', emissiveIntensity: 1.4 }),
+    );
+    vision.position.set(0.132, 0.12, frameW * 0.22);
+    shooterGroup.add(vision);
   }
 
   // ------------------------------------------------------------------ climber
@@ -429,12 +547,26 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   // Keep the deployed machine inside the 30 in (0.762 m) height limit.
   const climbHeight = Math.min(0.3, 0.17 + config.climber.maxLevel * 0.045 + (config.arm.enabled ? 0.03 : 0));
   if (config.climber.enabled || config.arm.enabled) {
-    const mastX = -frameL / 2 + 0.055;
-    for (const sz of [-1, 1]) {
-      box(aluminium, 0.04, climbHeight, 0.04, mastX, H + climbHeight / 2, sz * 0.09, armGroup);
+    // Three nested box-tube stages, so it reads as a telescope rather than a
+    // fixed mast. That is how 2026 robots reach the rungs inside R107's 30 in.
+    // The mast is bolted to the rear frame rail and runs up past the hopper, so
+    // it has a real load path instead of starting in mid air.
+    const mastX = -frameL / 2 - 0.012;
+    const mastBase = railY;
+    const mastTop = H + climbHeight;
+    const stages = 3;
+    const stageH = (mastTop - mastBase) / 2.1;
+    for (let stage = 0; stage < stages; stage++) {
+      const size = 0.058 - stage * 0.011;
+      const y = mastBase + (stage * (mastTop - mastBase - stageH)) / (stages - 1);
+      for (const sz of [-1, 1]) {
+        box(aluminium, size, stageH, size, mastX, y + stageH / 2, sz * 0.055, armGroup);
+      }
+      // Cross bolt at every stage joint.
+      box(machineAlu, size + 0.008, 0.012, 0.13, mastX, y + stageH - 0.01, 0, armGroup);
     }
-    box(machineAlu, 0.035, 0.035, 0.24, mastX, H + climbHeight, 0, armGroup);
-    const carriage = box(secondaryMat, 0.06, 0.08, 0.22, mastX + 0.03, H + 0.12, 0, armGroup);
+    box(machineAlu, 0.05, 0.035, 0.22, mastX, mastTop, 0, armGroup);
+    const carriage = box(secondaryMat, 0.06, 0.08, 0.22, mastX + 0.03, mastBase + 0.13, 0, armGroup);
     void carriage;
     if (config.climber.enabled) {
       const hook = new THREE.Mesh(
@@ -442,16 +574,19 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
         accentMat,
       );
       hook.rotation.y = Math.PI / 2;
-      hook.position.set(mastX, H + climbHeight + 0.05, 0);
+      hook.position.set(mastX, mastTop + 0.05, 0);
       armGroup.add(hook);
       // Winch drum and cable at the base of the mast.
-      const winch = cylinder(dark, 0.045, 0.12, mastX, H + 0.05, 0, armGroup, 12);
+      const winch = cylinder(dark, 0.045, 0.12, mastX, mastBase + 0.05, 0, armGroup, 12);
       winch.rotation.x = Math.PI / 2;
-      strut(black, mastX, H + climbHeight - 0.02, 0, mastX + 0.01, H + 0.08, 0, 0.008, armGroup);
+      strut(black, mastX, mastTop - 0.02, 0, mastX + 0.01, mastBase + 0.08, 0, 0.008, armGroup);
+      // Ratchet pawl so the carriage holds height if power drops.
+      const pawl = box(machineAlu, 0.02, 0.05, 0.03, mastX + 0.03, mastBase + 0.11, 0.06, armGroup);
+      pawl.rotation.z = -0.35;
     }
     if (config.arm.enabled && config.arm.style === 'arm') {
       const shoulder = new THREE.Group();
-      shoulder.position.set(mastX, H + 0.1, 0);
+      shoulder.position.set(mastX, mastTop - 0.15, 0);
       shoulder.rotation.z = 0.9;
       armGroup.add(shoulder);
       box(machineAlu, 0.34, 0.05, 0.11, 0.17, 0, 0, shoulder);
@@ -480,12 +615,22 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   // FUEL is 5.91 in across, so a 27 in robot hopper holds them in a tight
   // three-across grid with a second layer riding on top of the first.
   const carryGeo = geo(new THREE.SphereGeometry(0.075, 10, 9));
-  const carryMat = mat('#f6c631', { roughness: 0.86, metalness: 0.02, emissive: '#3f3000', emissiveIntensity: 0.2 });
+  const carryTex = makeFuelTexture();
+  disposables.push(carryTex);
+  const carryMat = mat('#ffffff', {
+    map: carryTex,
+    roughness: 0.9,
+    metalness: 0.02,
+    emissive: '#2a2000',
+    emissiveIntensity: 0.15,
+  });
   const carrySlots: Array<[number, number, number]> = [];
-  for (let layer = 0; layer < 2; layer++) {
+  // A real hopper load piles above the rim, so show three layers; the state's
+  // carrying count decides how many of the 27 slots are visible.
+  for (let layer = 0; layer < 3; layer++) {
     for (let ix = -1; ix <= 1; ix++) {
       for (let iz = -1; iz <= 1; iz++) {
-        carrySlots.push([ix * 0.155, hopperFloor + 0.08 + layer * 0.145, iz * 0.15]);
+        carrySlots.push([ix * 0.14 - 0.05, hopperFloor + 0.08 + layer * 0.135, iz * 0.15]);
       }
     }
   }
@@ -500,12 +645,14 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   const beaconMat = new THREE.MeshStandardMaterial({
     color: '#2b0707',
     emissive: '#ff2b2b',
-    emissiveIntensity: 0,
+    emissiveIntensity: 0.3,
   });
   disposables.push(beaconMat);
-  const beacon = new THREE.Mesh(geo(new THREE.SphereGeometry(0.03, 8, 8)), beaconMat);
-  beacon.position.set(-frameL / 2 + 0.06, hopperTop + 0.04, frameW * 0.34);
+  // A rotating-beacon stack on a bracket, clipped to the hopper rail.
+  const beacon = new THREE.Mesh(geo(new THREE.CylinderGeometry(0.022, 0.022, 0.05, 10)), beaconMat);
+  beacon.position.set(-hopperL / 2 + 0.05, hopperTop + 0.035, hopperW / 2 - 0.03);
   attitude.add(beacon);
+  box(black, 0.02, 0.02, 0.02, -hopperL / 2 + 0.05, hopperTop + 0.005, hopperW / 2 - 0.03);
 
   // Field-facing status ring and the highlight used for the player's robot.
   // Contact shadow: a soft dark patch under the frame beds the robot into the
@@ -575,7 +722,7 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
       // Wheels roll at the robot's real speed; the drum and intake spin with
       // their mechanisms so a moving robot never looks frozen.
       const speed = Math.hypot(state.vx, state.vy);
-      wheelAngle += (speed / 0.051) * dt;
+      wheelAngle += (speed / wheelRadius) * dt;
       for (const wheel of wheels) wheel.rotation.y = wheelAngle;
       if (drum) drum.rotation.y += (state.carrying > 0 ? 26 : 6) * dt;
       if (intakeRoller) intakeRoller.rotation.y -= 9 * dt * (state.intakeActive ? 2.4 : 0.5);
@@ -584,10 +731,12 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
         const targetX = state.expanded ? 0.12 : 0.34;
         armGroup.position.x += (targetX - armGroup.position.x) * 0.15;
       }
-      if (config.intake.enabled) {
-        const targetX = state.expanded ? 0.06 : 0;
-        intakeGroup.position.x += (targetX - intakeGroup.position.x) * 0.2;
-      }
+  if (config.intake.enabled) {
+    // The intake runs out whenever it is picking up, not only when the arm is
+    // flagged as extended.
+    const targetX = state.expanded || state.intakeActive ? 0.18 : 0;
+    intakeGroup.position.x += (targetX - intakeGroup.position.x) * 0.16;
+  }
       carryGroup.children.forEach((child, i) => {
         child.visible = i < Math.min(state.carrying, carrySlots.length);
       });
@@ -600,12 +749,12 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
       } else if (state.pinned) {
         ringMat.color.set('#ffc83d');
         ringMat.opacity = 0.9;
-        beaconMat.emissiveIntensity = 0;
+        beaconMat.emissiveIntensity = 0.3;
         ledMat.color.set('#ffc83d');
       } else {
         ringMat.color.copy(red ? ALLIANCE_RED : ALLIANCE_BLUE);
         ringMat.opacity = 0.5;
-        beaconMat.emissiveIntensity = 0;
+        beaconMat.emissiveIntensity = 0.3;
         ledMat.color.set(red ? '#ff4553' : '#4a94ff');
       }
       if (state.climb.level > 0) ringMat.opacity = 0.85;

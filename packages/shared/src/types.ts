@@ -143,7 +143,16 @@ export interface FuelSpawn {
   x: number;
   y: number;
   count: number;
+  /** Radius of a circular pile, in metres. */
   radius: number;
+  /**
+   * Optional rectangular corral. `width` runs across the field (y) and `depth`
+   * along it (x). The NEUTRAL ZONE uses one: §6.3.4.1 corrals FUEL into a
+   * 206.0 in x 72.0 in bounding box rather than loose piles, so the field crew
+   * can split it evenly on the CENTER LINE.
+   */
+  width?: number;
+  depth?: number;
 }
 
 /**

@@ -36,8 +36,10 @@ same room.
   BUMPs are 73 in × 44.4 in × 6.513 in with their ramps toward both zones, each TRENCH runs from
   a guardrail inboard to its BUMP, and the ALLIANCE ZONE is the manual's 158.6 in deep, ending at
   the alliance-coloured ROBOT STARTING LINE that emerges from under each HUB. FUEL is staged the
-  way §6.3.4 stages it: one piled arrangement in the NEUTRAL ZONE split across the CENTER LINE,
-  24 FUEL in each DEPOT and 24 in each human player's OUTPOST chute. The BUMPs are physical
+  way §6.3.4 stages it: 504 per match, 24 in each DEPOT, 24 in each human player's OUTPOST
+  chute, up to 8 preloaded per robot, and the remaining 360 corralled into the manual's
+  206.0 in × 72.0 in bounding box on the CENTER LINE — two dense blocks either side of the
+  2.0 in divider, which is exactly what a real kickoff looks like. The BUMPs are physical
   ramps too — a robot loses momentum climbing one and gets it back on the far side, and loose
   FUEL rolls off them.
 - **An arena, not a diorama** — the field sits inside a venue: 20 in clear polycarbonate guardrails
@@ -48,11 +50,13 @@ same room.
   referee in yellow, an FTA with a tablet and reset crew in vests. The carpet carries its roll
   seam, gaffer-taped repairs and rubber scuffs, and the TRENCHes differ by side: the electronics
   cabinet along the scoring table, the pivoting arm on the other, exactly as §5.6 describes.
-- **Robots that look like robots** — a 27 in square swerve frame (or a six-wheel tank base) that
-  fits the 110 in perimeter rule, 4.5 in fabric bumpers whose numbers meet R401's 3.75 in minimum
-  on every side, a full-width floor intake, a
-  polycarbonate hopper with visible FUEL, a drum shooter with a hood, a rear climber with a hook,
-  battery and electronics, alliance LEDs and a status beacon.
+- **Robots that look like robots** — a 27 in square swerve frame with SDS MK5n modules (or a
+  six-wheel tank base with 6 in wheels) inside the 110 in perimeter rule, 4.5 in fabric bumpers
+  that fill the R405 zone from 2.5 to 5.75 in with R412 numbers on every face, a full-width
+  linearly deploying floor intake on green compliant wheels, a clear polycarbonate net hopper
+  with visible FUEL, a hooded drum shooter with a vision camera, and a three-stage telescoping
+  climber. Under the hopper sits a real electronics stack at published sizes: MK ES17-12
+  battery, 120 A breaker, REV PDH, roboRIO 2 and a VH-109 radio.
 - **Solo offline** — the same deterministic simulation runs in the browser. After the first load the
   PWA service worker keeps the shell and assets available with no connection.
 - **Touch + keyboard** — on-screen joystick, rotate pad and one-tap mechanisms; WASD, Q/E, Space,

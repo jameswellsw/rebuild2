@@ -41,7 +41,8 @@ import {
 import { Rng, clamp, circleRectOverlap, round } from './math.js';
 
 export const FIXED_DT = 1 / 60;
-const BALL_RADIUS = 0.085;
+/** Official FUEL is a 5.91 in (0.150 m) foam ball, per the 2026 manual. */
+const BALL_RADIUS = 0.075;
 const GRAVITY = 9.81;
 /** Loose FUEL ceiling, scaled from the number of balls the field starts with. */
 function fuelCeilingFor(field: FieldLayout): number {
@@ -238,11 +239,34 @@ export class MatchEngine {
   private spawnInitialFuel(): FuelObject[] {
     const fuel: FuelObject[] = [];
     for (const spawn of this.field.fuelSpawns) {
+      const corralled = spawn.width !== undefined && spawn.depth !== undefined;
+      const width = spawn.width ?? 0;
+      const depth = spawn.depth ?? 0;
+      // §6.3.4.1 corrals the NEUTRAL ZONE FUEL into a rectangle, so pack it on a
+      // jittered grid at roughly the density of a real pile instead of a disc.
+      const aspect = corralled && depth > 0 ? width / depth : 1;
+      const cols = corralled ? Math.max(1, Math.round(Math.sqrt(spawn.count * aspect))) : 1;
+      const rows = corralled ? Math.max(1, Math.ceil(spawn.count / cols)) : 1;
+      const pitchX = corralled ? depth / rows : 0;
+      const pitchY = corralled ? width / cols : 0;
       for (let i = 0; i < spawn.count; i++) {
-        const theta = this.rng.range(0, Math.PI * 2);
-        const r = Math.sqrt(this.rng.next()) * spawn.radius;
-        let x = clamp(spawn.x + Math.cos(theta) * r, BALL_RADIUS, this.field.size.length - BALL_RADIUS);
-        let y = clamp(spawn.y + Math.sin(theta) * r, BALL_RADIUS, this.field.size.width - BALL_RADIUS);
+        let x: number;
+        let y: number;
+        if (corralled) {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          // A perfect grid is explicitly not what the manual expects, so each
+          // ball wanders inside its cell while staying in the corral.
+          x = spawn.x + (row + 0.5) * pitchX - depth / 2 + this.rng.range(-0.3, 0.3) * pitchX;
+          y = spawn.y + (col + 0.5) * pitchY - width / 2 + this.rng.range(-0.3, 0.3) * pitchY;
+        } else {
+          const theta = this.rng.range(0, Math.PI * 2);
+          const r = Math.sqrt(this.rng.next()) * spawn.radius;
+          x = spawn.x + Math.cos(theta) * r;
+          y = spawn.y + Math.sin(theta) * r;
+        }
+        x = clamp(x, BALL_RADIUS, this.field.size.length - BALL_RADIUS);
+        y = clamp(y, BALL_RADIUS, this.field.size.width - BALL_RADIUS);
         // Keep loose FUEL out of solid HUB footprints.
         for (const hub of this.field.hubs) {
           const rect = this.hubRectFor(hub);

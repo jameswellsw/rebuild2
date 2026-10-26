@@ -48,6 +48,26 @@ const HUMAN_LINE = 24 * IN;
 /** NEUTRAL ZONE: 283 in deep, i.e. 184.1 in in from each wall. */
 export const NEUTRAL_ZONE_DEPTH = 283 * IN;
 
+/**
+ * §6.3.4.1: FIELD STAFF stage the NEUTRAL ZONE by corralling all FUEL inside a
+ * bounding box approximately 206.0 in wide and 72.0 in deep, split by a solid
+ * 2.0 in divider on the CENTER LINE. The divider comes out before the match,
+ * leaving the small gap the manual expects. The corral is what makes a real
+ * REBUILT kickoff look like a solid block of yellow rather than a scatter.
+ */
+const CORRAL_WIDTH = 206 * IN; // across the field (y)
+const CORRAL_DEPTH = 72 * IN; // along the field (x)
+const CORRAL_DIVIDER = 2 * IN;
+const CORRAL_SIDE = (CORRAL_DEPTH - CORRAL_DIVIDER) / 2;
+
+/** §6.3.4: 504 FUEL per match, 24 in each DEPOT and 24 in each OUTPOST CHUTE. */
+export const FUEL_PER_MATCH = 504;
+export const FUEL_PER_DEPOT = 24;
+export const FUEL_PER_CHUTE = 24;
+/** The rest is corralled in the NEUTRAL ZONE: 360-408 depending on preloads. */
+export const FUEL_NEUTRAL = 360;
+const CORRAL_COUNT = FUEL_NEUTRAL / 2;
+
 export const REBUILT_FIELD: FieldLayout = {
   id: 'rebuilt-2026-official',
   name: 'REBUILT 2026 — Championship Field',
@@ -92,19 +112,37 @@ export const REBUILT_FIELD: FieldLayout = {
     { id: 'red-depot', alliance: 'red', x: DEPOT_DEPTH / 2 + 0.08, y: 6.28, rotation: 0, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
     { id: 'blue-depot', alliance: 'blue', x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.28, rotation: Math.PI, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
   ],
-  // §6.3.4 staging: the bulk of the FUEL is one piled arrangement in the
-  // NEUTRAL ZONE, split across the CENTER LINE, plus 24 staged in each DEPOT.
-  // (FUEL in each OUTPOST CHUTE belongs to its human player and is tracked by
-  // the engine, not spawned as loose field FUEL.)
+  // §6.3.4 staging: 504 FUEL per match. 24 sit in each DEPOT (not in a uniform
+  // layout), 24 belong to each human player in the OUTPOST CHUTE, up to 48 are
+  // preloaded in ROBOTS, and the remaining 360 are corralled on the CENTER
+  // LINE inside the manual's 206.0 x 72.0 in bounding box. The two corral
+  // spawns butt against the 2.0 in divider so the kickoff field reads as one
+  // block split down the middle, exactly like Figure 6-3.
+  // (OUTPOST CHUTE FUEL belongs to its human player and is tracked by the
+  // engine, not spawned as loose field FUEL.)
   fuelSpawns: [
-    { x: FIELD_LENGTH / 2 - 1.06, y: hubY - 1.32, count: 48, radius: 1.12 },
-    { x: FIELD_LENGTH / 2 + 1.06, y: hubY - 1.32, count: 48, radius: 1.12 },
-    { x: FIELD_LENGTH / 2 - 1.06, y: hubY + 1.32, count: 48, radius: 1.12 },
-    { x: FIELD_LENGTH / 2 + 1.06, y: hubY + 1.32, count: 48, radius: 1.12 },
-    { x: DEPOT_DEPTH / 2 + 0.08, y: 6.06, count: 12, radius: 0.26 },
-    { x: DEPOT_DEPTH / 2 + 0.08, y: 6.5, count: 12, radius: 0.26 },
-    { x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.06, count: 12, radius: 0.26 },
-    { x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.5, count: 12, radius: 0.26 },
+    {
+      x: FIELD_LENGTH / 2 - (CORRAL_DIVIDER / 2 + CORRAL_SIDE / 2),
+      y: hubY,
+      count: CORRAL_COUNT,
+      radius: CORRAL_SIDE / 2,
+      width: CORRAL_WIDTH,
+      depth: CORRAL_SIDE,
+    },
+    {
+      x: FIELD_LENGTH / 2 + (CORRAL_DIVIDER / 2 + CORRAL_SIDE / 2),
+      y: hubY,
+      count: CORRAL_COUNT,
+      radius: CORRAL_SIDE / 2,
+      width: CORRAL_WIDTH,
+      depth: CORRAL_SIDE,
+    },
+    // Each DEPOT holds 24. The manual explicitly allows (and real fields show)
+    // an uneven layout, so these are two unequal heaps against the wall.
+    { x: DEPOT_DEPTH / 2 + 0.08, y: 6.1, count: 14, radius: 0.3 },
+    { x: DEPOT_DEPTH / 2 + 0.08, y: 6.46, count: 10, radius: 0.3 },
+    { x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.1, count: 14, radius: 0.3 },
+    { x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.46, count: 10, radius: 0.3 },
   ],
   barriers: [],
   // Robots stage between the alliance wall and the starting line, clear of the

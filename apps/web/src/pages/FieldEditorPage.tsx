@@ -447,8 +447,13 @@ export function FieldEditorPage() {
           <div className="editor-grid-fields">
             <NumberInput label="X (m)" value={fuel.x} onChange={(value) => updateSelected((draft) => { draft.fuelSpawns[selection.index].x = value; })} />
             <NumberInput label="Y (m)" value={fuel.y} onChange={(value) => updateSelected((draft) => { draft.fuelSpawns[selection.index].y = value; })} />
-            <NumberInput label="FUEL count" value={fuel.count} step={1} min={1} max={80} onChange={(value) => updateSelected((draft) => { draft.fuelSpawns[selection.index].count = Math.round(value); })} />
+            <NumberInput label="FUEL count" value={fuel.count} step={1} min={1} max={400} onChange={(value) => updateSelected((draft) => { draft.fuelSpawns[selection.index].count = Math.round(value); })} />
             <NumberInput label="Spread" value={fuel.radius} min={0.2} max={2.5} onChange={(value) => updateSelected((draft) => { draft.fuelSpawns[selection.index].radius = value; })} />
+            {fuel.width !== undefined && fuel.depth !== undefined ? (
+              <span className="field-hint">
+                Corralled {Math.round(fuel.width / 0.0254)} × {Math.round(fuel.depth / 0.0254)} in
+              </span>
+            ) : null}
           </div>
         </>
       );
