@@ -10,7 +10,7 @@ export function createDefaultConfig(): RobotConfig {
     drive: 'swerve',
     chassis: { length: 0.686, width: 0.686, height: 0.42, mass: 20 },
     stats: { maxSpeed: 5.3, accel: 8.4, turnRate: 3.6, grip: 0.9 },
-    intake: { enabled: true, width: 0.62, capacity: 5, speed: 1.8 },
+    intake: { enabled: true, width: 0.62, capacity: 48, speed: 1.8 },
     shooter: { enabled: true, power: 8.5, accuracy: 0.9, range: 5.2, cooldown: 0.5 },
     climber: { enabled: true, maxLevel: 1, strength: 1 },
     arm: { enabled: false, reach: 0, style: 'arm' },
@@ -71,7 +71,7 @@ export const PRESET_BOTS: BotRecord[] = [
     id: 'preset-atlas',
     name: 'Atlas',
     teamNumber: 8621,
-    description: 'A polished swerve bot with an auto-aim turret and a full-height climb. The all-rounder.',
+    description: 'A polished swerve bot with a vision turret and a full-height climb. The all-rounder.',
     parts: [
       'chassis-standard',
       'drive-swerve',

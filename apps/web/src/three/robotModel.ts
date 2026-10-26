@@ -625,12 +625,15 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
     emissiveIntensity: 0.15,
   });
   const carrySlots: Array<[number, number, number]> = [];
-  // A real hopper load piles above the rim, so show three layers; the state's
-  // carrying count decides how many of the 27 slots are visible.
-  for (let layer = 0; layer < 3; layer++) {
+  // A big REBUILT hopper carries 60 FUEL: five layers, four across, three deep.
+  // The state's carrying count decides how many of those slots are visible. A
+  // full load heaps just above the rim, the way a real dump hopper does.
+  for (let layer = 0; layer < 5; layer++) {
     for (let ix = -1; ix <= 1; ix++) {
-      for (let iz = -1; iz <= 1; iz++) {
-        carrySlots.push([ix * 0.14 - 0.05, hopperFloor + 0.08 + layer * 0.135, iz * 0.15]);
+      for (let iz = -1.5; iz <= 1.5; iz++) {
+        // Tight spacing lets the foam compress into a packed pile: 0.79 m to
+        // the top ball keeps the heap around the 30 in robot height.
+        carrySlots.push([ix * 0.14 - 0.05, hopperFloor + 0.075 + layer * 0.105, iz * 0.115]);
       }
     }
   }

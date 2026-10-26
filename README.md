@@ -36,9 +36,9 @@ same room.
   BUMPs are 73 in × 44.4 in × 6.513 in with their ramps toward both zones, each TRENCH runs from
   a guardrail inboard to its BUMP, and the ALLIANCE ZONE is the manual's 158.6 in deep, ending at
   the alliance-coloured ROBOT STARTING LINE that emerges from under each HUB. FUEL is staged the
-  way §6.3.4 stages it: 504 per match, 24 in each DEPOT, 24 in each human player's OUTPOST
-  chute, up to 8 preloaded per robot, and the remaining 360 corralled into the manual's
-  206.0 in × 72.0 in bounding box on the CENTER LINE — two dense blocks either side of the
+  way §6.3.4 stages it at the Championship quantity: 600 per match, 24 in each DEPOT, 24 in
+  each human player's OUTPOST chute, up to 8 preloaded per robot, and the remaining 456
+  corralled into the manual's 206.0 in × 72.0 in bounding box on the CENTER LINE — two dense blocks either side of the
   2.0 in divider, which is exactly what a real kickoff looks like. The BUMPs are physical
   ramps too — a robot loses momentum climbing one and gets it back on the far side, and loose
   FUEL rolls off them.
@@ -60,7 +60,7 @@ same room.
 - **Solo offline** — the same deterministic simulation runs in the browser. After the first load the
   PWA service worker keeps the shell and assets available with no connection.
 - **Touch + keyboard** — on-screen joystick, rotate pad and one-tap mechanisms; WASD, Q/E, Space,
-  F, C, X, G on desktop. Dark and light themes.
+  Shift, C, X, G on desktop. Dark and light themes.
 
 ## Stack
 
@@ -180,11 +180,27 @@ ready` and room creation is unavailable there.
 | Translate | `W A S D` / arrows | left joystick |
 | Rotate | `Q` / `E` | rotate buttons |
 | Shoot FUEL | `Space` | SHOOT (hold) |
-| Intake | `F` | INTAKE toggle |
+| Intake | `Shift` (hold) | INTAKE toggle |
 | Extend arm | `X` | EXTEND toggle |
 | Climb TOWER | `C` | CLIMB (hold) |
 | Drop FUEL | `G` | DROP |
 | Cameras | on-screen switcher | switcher |
+
+## Physics
+
+The same deterministic engine runs in the browser and on the room server at a fixed 60 Hz.
+
+- **Shooting.** Each shot picks the flattest hood (52°–84°) that both clears the HUB's 72 in
+  front panel and drops through the opening, then spins the flywheel to the matching muzzle speed —
+  capped by the robot's rated `power`. Aim is the chassis heading, nothing aims for the driver, so
+  squaring up is the skill. Shots past the flywheel's reach fall short, and point-blank shots turn
+  into steep lobs.
+- **FUEL.** Every loose ball is a 0.15 m, 0.21 kg body: ball-to-ball contacts on a spatial grid,
+  bumper pushes, intake suction, gravity down the BUMP ramps, bounces off the 20 in guardrail and
+  the HUB panels, and a support surface (carpet, ramp, HUB roof, TRENCH roof). Corral FUEL sleeps
+  until something disturbs it, which keeps a 600-ball kickoff stable and cheap.
+- **Robots.** Mass-based bumper collisions, traction-limited acceleration, ramp gravity, pinning and
+  human-player reach all live in the same fixed-step loop.
 
 ## Rules implemented
 

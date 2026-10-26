@@ -86,7 +86,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 8,
     mass: 4,
     description: 'A compact roller for scooping loose FUEL.',
-    stats: '5 FUEL · 0.55 m wide',
+    stats: '40 FUEL · 0.55 m wide',
   },
   {
     id: 'intake-wide',
@@ -95,7 +95,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 13,
     mass: 6,
     description: 'Wide pickup mouth, ideal for the midfield fuel pile.',
-    stats: '8 FUEL · 0.72 m wide',
+    stats: '48 FUEL · 0.72 m wide',
   },
   {
     id: 'intake-vacuum',
@@ -104,7 +104,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 18,
     mass: 8,
     description: 'Big capacity and long reach. Demands a strong drivetrain.',
-    stats: '11 FUEL · 0.68 m wide',
+    stats: '60 FUEL · 0.68 m wide',
   },
   { id: 'shooter-none', name: 'No launcher', slot: 'shooter', cost: 0, mass: 0, description: 'Drive FUEL to the HUB by hand? Not in this game.', stats: '—' },
   {
@@ -127,11 +127,11 @@ export const PART_CATALOG: PartDefinition[] = [
   },
   {
     id: 'shooter-turret',
-    name: 'Auto-aim turret',
+    name: 'Vision turret',
     slot: 'shooter',
     cost: 26,
     mass: 10,
-    description: 'Vision-guided turret with a flat, fast shot.',
+    description: 'Vision-guided turret with a tight cone and a flat, fast shot.',
     stats: '96% accuracy · 6.4 m range',
   },
   { id: 'climber-none', name: 'No climber', slot: 'climber', cost: 0, mass: 0, description: 'Cannot climb the TOWER.', stats: 'Level 0' },
@@ -297,7 +297,9 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
       next.intake = {
         enabled: !partId.endsWith('-none'),
         width: partId === 'intake-wide' ? 0.72 : partId === 'intake-vacuum' ? 0.68 : 0.55,
-        capacity: partId === 'intake-wide' ? 8 : partId === 'intake-vacuum' ? 11 : partId === 'intake-roller' ? 5 : 0,
+        // There is no rule limit on stored FUEL, and big hoppers win matches:
+        // every intake here is a real dump-style hopper of at least 40 FUEL.
+        capacity: partId === 'intake-wide' ? 48 : partId === 'intake-vacuum' ? 60 : partId === 'intake-roller' ? 40 : 0,
         speed: partId === 'intake-vacuum' ? 2.7 : partId === 'intake-wide' ? 2.1 : 1.8,
       };
       break;

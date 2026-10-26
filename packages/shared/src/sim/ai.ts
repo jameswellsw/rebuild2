@@ -84,19 +84,25 @@ export function computeAIInput(
   // collecting and stage near the center instead of wasting shots.
   const full = robot.carrying >= Math.max(1, config.intake.capacity);
   const canScore = active && config.shooter.enabled && distToHub <= config.shooter.range * 1.15;
+  // Hold a shooting ring rather than creeping into the HUB: inside about 2 m
+  // the HUB's own wall is between the muzzle and the opening, so a bot that
+  // parks on the bumper cannot score at all.
+  const standOff = config.shooter.range * 0.62;
   if (robot.carrying > 0 && canScore && !full) {
     const targetAngle = Math.atan2(hub.y - robot.y, hub.x - robot.x);
     input.rotate = clamp(angleDelta(robot.heading, targetAngle) * 3.2, -1, 1);
-    input.moveY = distToHub > config.shooter.range * 0.7 ? 0.55 : 0.08;
-    input.actions.shoot = Math.abs(angleDelta(robot.heading, targetAngle)) < 0.2;
+    input.moveY = distToHub > standOff + 0.8 ? 0.55 : distToHub < standOff - 0.9 ? -0.4 : 0;
+    // Shots follow the robot's heading, so square up tightly before firing.
+    input.actions.shoot = Math.abs(angleDelta(robot.heading, targetAngle)) < 0.08;
     input.actions.intake = false;
     return input;
   }
   if (robot.carrying > 0 && canScore) {
     const targetAngle = Math.atan2(hub.y - robot.y, hub.x - robot.x);
     input.rotate = clamp(angleDelta(robot.heading, targetAngle) * 3.2, -1, 1);
-    input.actions.shoot = Math.abs(angleDelta(robot.heading, targetAngle)) < 0.25;
-    input.moveY = distToHub > config.shooter.range * 0.55 ? 0.45 : 0.05;
+    input.actions.shoot = Math.abs(angleDelta(robot.heading, targetAngle)) < 0.1;
+    input.moveY = distToHub > standOff + 0.9 ? 0.45 : distToHub < standOff - 0.8 ? -0.3 : 0;
+    input.actions.intake = false;
     return input;
   }
 

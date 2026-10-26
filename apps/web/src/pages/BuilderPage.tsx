@@ -40,7 +40,7 @@ const NEW_ROBOT: RobotConfig = {
   drive: 'tank',
   chassis: { length: 0.78, width: 0.6, height: 0.4, mass: 27 },
   stats: { maxSpeed: 4.4, accel: 6, turnRate: 2.4, grip: 0.8 },
-  intake: { enabled: true, width: 0.55, capacity: 5, speed: 1.8 },
+  intake: { enabled: true, width: 0.55, capacity: 48, speed: 1.8 },
   shooter: { enabled: true, power: 8.5, accuracy: 0.9, range: 5.2, cooldown: 0.5 },
   climber: { enabled: true, maxLevel: 1, strength: 1 },
   arm: { enabled: false, style: 'arm', reach: 0 },
@@ -615,8 +615,12 @@ export function BuilderPage() {
 
             <details className="tune-section" open>
               <summary>Intake &amp; launcher</summary>
-              {range('Intake capacity', config.intake.capacity, 0, 12, 1, ' FUEL', (value) =>
-                patch((draft) => { draft.intake.capacity = value; }),
+              {config.intake.enabled ? (
+                range('Hopper capacity', config.intake.capacity, 40, 60, 1, ' FUEL', (value) =>
+                  patch((draft) => { draft.intake.capacity = value; }),
+                )
+              ) : (
+                <p className="tune-empty">No intake fitted. Add one from the component rack to hold FUEL.</p>
               )}
               {config.shooter.enabled ? (
                 <>

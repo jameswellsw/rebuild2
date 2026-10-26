@@ -77,6 +77,9 @@ describe('REBUILT match simulation', () => {
   it('starts both HUBs active and scores FUEL in the robot’s active HUB', () => {
     const engine = makeEngine();
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    // Shots follow the robot's heading, so square up on the HUB first.
+    red.heading = Math.atan2(hub.y - red.y, hub.x - red.x);
     red.carrying = 6;
     engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
     advance(engine, 1);
@@ -94,14 +97,98 @@ describe('REBUILT match simulation', () => {
     engine.state.firstInactiveHub = 'red';
     engine.state.hubActive = { red: false, blue: true };
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
-    red.x = getHub(REBUILT_FIELD, 'red').x;
-    red.y = getHub(REBUILT_FIELD, 'red').y;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    red.x = hub.x - 2.4;
+    red.y = hub.y;
+    red.heading = 0;
     red.carrying = 4;
     engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
     advance(engine, 1.5);
     engine.setInput('red-bot', input());
     advance(engine, 2.5);
     expect(engine.state.scores.red.teleopFuel).toBe(0);
+    // The ball did reach the opening, and the inactive HUB spat it back out.
+    expect(engine.state.fuel.some((f) => f.releasedByHub === 'red')).toBe(true);
+  });
+
+  it('misses the HUB when the robot is not facing it', () => {
+    const engine = makeEngine();
+    const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    red.x = hub.x - 2.4;
+    red.y = hub.y;
+    // Facing downfield, away from its own HUB: the same shot that scores when
+    // squared up has to sail past the funnel here.
+    red.heading = Math.PI;
+    red.carrying = 6;
+    engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
+    advance(engine, 1);
+    engine.setInput('red-bot', input());
+    advance(engine, 2);
+    expect(engine.state.scores.red.autoFuel).toBe(0);
+  });
+
+  it('shoves loose FUEL with its bumpers instead of driving through it', () => {
+    const engine = makeEngine();
+    const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    // Start just short of the NEUTRAL ZONE corral and drive straight into it.
+    const corral = REBUILT_FIELD.fuelSpawns[0];
+    red.x = corral.x - (corral.depth ?? 0) / 2 - 0.7;
+    red.y = corral.y;
+    red.heading = 0;
+    const before = engine.state.fuel
+      .filter((f) => Math.hypot(f.x - red.x, f.y - red.y) < 1.5)
+      .map((f) => ({ id: f.id, x: f.x, y: f.y }));
+    engine.setInput('red-bot', input({ moveY: 1 }));
+    advance(engine, 1.4);
+    engine.setInput('red-bot', input());
+    const moved = engine.state.fuel.filter((f) => {
+      const start = before.find((b) => b.id === f.id);
+      return start ? Math.hypot(f.x - start.x, f.y - start.y) > 0.12 : false;
+    });
+    // The pile has to give way rather than let the chassis pass through it.
+    expect(before.length).toBeGreaterThan(20);
+    expect(moved.length).toBeGreaterThan(5);
+  });
+
+  it('falls short when the HUB is past the flywheel range', () => {
+    const shoot = () => input({ actions: { ...input().actions, shoot: true } });
+    const hub = getHub(REBUILT_FIELD, 'red');
+    const run = (distance: number) => {
+      const setup = makeSetup();
+      setup.robots[0].bot.shooter = { ...setup.robots[0].bot.shooter, power: 7, accuracy: 1 };
+      const engine = makeEngine(setup);
+      const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+      red.x = hub.x + distance;
+      red.y = hub.y;
+      red.heading = Math.PI;
+      red.carrying = 6;
+      engine.setInput('red-bot', shoot());
+      advance(engine, 1);
+      engine.setInput('red-bot', input());
+      advance(engine, 3);
+      return engine.state.scores.red.autoFuel;
+    };
+    // Same robot, same aim: 3 m is inside a 7 m/s flywheel's reach, 9 m is not.
+    expect(run(3)).toBeGreaterThan(0);
+    expect(run(9)).toBe(0);
+  });
+
+  it('lobs FUEL in from point-blank instead of hitting the HUB panel', () => {
+    const engine = makeEngine();
+    const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    // 1.5 m from the HUB centre: the muzzle is barely a ball-width clear of the
+    // front panel, which is exactly where a flat shot used to smack the wall.
+    red.x = hub.x + 1.5;
+    red.y = hub.y;
+    red.heading = Math.PI;
+    red.carrying = 6;
+    engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
+    advance(engine, 1);
+    engine.setInput('red-bot', input());
+    advance(engine, 2);
+    expect(engine.state.scores.red.autoFuel).toBeGreaterThan(0);
   });
 
   it('sets the first inactive HUB from AUTO FUEL', () => {

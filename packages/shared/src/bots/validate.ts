@@ -115,6 +115,9 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
   const parts = validParts.filter((p) => (seen.has(p.slot) ? false : (seen.add(p.slot), true)));
 
   const skin = r.skin ?? base.skin;
+  // A robot that can hold FUEL holds a real hopper load of it: the floor is 40,
+  // a 27 in frame with no expansion. No intake means no capacity at all.
+  const intakeEnabled = bool(r.intake?.enabled, base.intake.enabled);
   const config: RobotConfig = {
     id: str(r.id, fallbackId, 64),
     name: str(r.name, 'New robot', 32),
@@ -133,9 +136,9 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
       grip: num(r.stats?.grip, base.stats.grip, 0, 1),
     },
     intake: {
-      enabled: bool(r.intake?.enabled, base.intake.enabled),
+      enabled: intakeEnabled,
       width: num(r.intake?.width, base.intake.width, 0.2, 1.2),
-      capacity: Math.round(num(r.intake?.capacity, base.intake.capacity, 0, 15)),
+      capacity: intakeEnabled ? Math.round(num(r.intake?.capacity, base.intake.capacity, 40, 60)) : 0,
       speed: num(r.intake?.speed, base.intake.speed, 0, 5),
     },
     shooter: {

@@ -19,6 +19,10 @@ const EMPTY_ACTIONS: DriverActions = {
   drop: false,
 };
 
+// The HUD shows a fixed number of segments, scaled to the hopper size, so a
+// 36-ball load reads as "full" without 36 tiny pips in the corner.
+const LOAD_SEGMENTS = 12;
+
 export function MatchControls({
   robot,
   config,
@@ -156,8 +160,9 @@ export function MatchControls({
       if (event.code === 'Space') {
         setShooting(true);
         setAction('shoot', true);
-      } else if (event.code === 'KeyF') {
-        toggleAction('intake');
+      } else if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        // Shift is a hold, the way a driver station button is.
+        setAction('intake', true);
       } else if (event.code === 'KeyC') {
         setAction('climb', true);
       } else if (event.code === 'KeyX') {
@@ -175,6 +180,8 @@ export function MatchControls({
         setAction('shoot', false);
       } else if (event.code === 'KeyC') {
         setAction('climb', false);
+      } else if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        setAction('intake', false);
       }
     };
     const blur = () => {
@@ -182,7 +189,7 @@ export function MatchControls({
       motion.current = { moveX: 0, moveY: 0, rotate: 0 };
       setKnob({ x: 0, y: 0 });
       setShooting(false);
-      actions.current = { ...actions.current, shoot: false, climb: false };
+      actions.current = { ...actions.current, shoot: false, climb: false, intake: false };
       setActionState({ ...actions.current });
       emitNow();
     };
@@ -330,9 +337,11 @@ export function MatchControls({
             <span>/{config?.intake.capacity || 0}</span>
           </div>
           <div className="load-pips">
-            {Array.from({ length: Math.min(config?.intake.capacity || 0, 11) }).map((_, index) => (
-              <i key={index} className={index < (robot?.carrying ?? 0) ? 'filled' : ''} />
-            ))}
+            {Array.from({ length: LOAD_SEGMENTS }).map((_, index) => {
+              const capacity = Math.max(1, config?.intake.capacity || 0);
+              const filled = Math.ceil(((robot?.carrying ?? 0) / capacity) * LOAD_SEGMENTS);
+              return <i key={index} className={index < filled ? 'filled' : ''} />;
+            })}
           </div>
         </div>
         <div className="status-chips">
@@ -348,7 +357,7 @@ export function MatchControls({
           )}
         </div>
         <p className="desktop-help">
-          <kbd>WASD</kbd> drive <kbd>Q/E</kbd> rotate <kbd>Space</kbd> shoot <kbd>F</kbd> intake{' '}
+          <kbd>WASD</kbd> drive <kbd>Q/E</kbd> rotate <kbd>Space</kbd> shoot <kbd>Shift</kbd> intake{' '}
           <kbd>C</kbd> climb <kbd>X</kbd> extend <kbd>G</kbd> drop
         </p>
         {!touchMode && (
@@ -393,7 +402,7 @@ export function MatchControls({
         >
           <Icon name="fuel" size={18} />
           <span>INTAKE</span>
-          <small>F</small>
+          <small>SHIFT</small>
         </button>
         <button
           type="button"

@@ -31,6 +31,7 @@ import type {
 } from '../types.js';
 import { computeAIInput } from './ai.js';
 import {
+  bumpHeightAt,
   bumpSlopeAt,
   getHub,
   getTower,
@@ -44,6 +45,26 @@ export const FIXED_DT = 1 / 60;
 /** Official FUEL is a 5.91 in (0.150 m) foam ball, per the 2026 manual. */
 const BALL_RADIUS = 0.075;
 const GRAVITY = 9.81;
+/** Foam on carpet: a short, dead bounce and a lot of rolling resistance. */
+const BALL_RESTITUTION = 0.42;
+const BALL_WALL_RESTITUTION = 0.5;
+const BALL_CONTACT_FRICTION = 0.28;
+/** Rolling resistance of a 0.21 kg foam ball on the REBUILT carpet, m/s². */
+const BALL_ROLL_FRICTION = 2.1;
+/** Gravity along the 15° BUMP ramps, m/s² — balls roll off them fast. */
+const BALL_RAMP_PULL = 3.4;
+/** How hard the same ramps pull a 60 kg robot back down, m/s². */
+const ROBOT_RAMP_PULL = 2.75;
+/** A bumper hands a loose ball most of its speed when it drives into it. */
+const ROBOT_BUMPER_RESTITUTION = 0.35;
+/** Suction at the intake mouth: how hard FUEL is pulled toward the rollers. */
+const INTAKE_PULL = 8;
+/** FUEL leaves the shooter at 24.4 in above the carpet (the 2026 hood height). */
+const SHOT_HEIGHT = 0.62;
+/** Flat default hood (55°), used when no lofted solution clears the HUB. */
+const SHOT_HOOD = 0.96;
+/** Fully raised hood: steep enough to drop a ball over the rim point-blank. */
+const HOOD_MAX = 1.47;
 /** Loose FUEL ceiling, scaled from the number of balls the field starts with. */
 function fuelCeilingFor(field: FieldLayout): number {
   return Math.round(field.fuelSpawns.reduce((total, spawn) => total + spawn.count, 0) * 1.45);
@@ -128,6 +149,14 @@ export class MatchEngine {
   private readonly startingFuel: number;
   private readonly tippedAt = new Map<string, number>();
   private readonly omega = new Map<string, number>();
+  /**
+   * Loose balls that are actually moving. FUEL is staged in tightly packed
+   * corrals, so hundreds of balls start asleep: overlapping neighbours would
+   * otherwise blow the pile apart on the first tick. A ball wakes when a robot
+   * touches it, when a moving ball hits it, and goes back to sleep once it has
+   * settled.
+   */
+  private readonly awake = new Set<number>();
 
   constructor(setup: MatchSetup, options: EngineOptions = {}) {
     this.game = options.game ?? DEFAULT_GAME;
@@ -581,9 +610,10 @@ export class MatchEngine {
         const grade = Math.hypot(slope.x, slope.y);
         // Moving against the gradient is a climb; with it is a descent.
         const climbing = robot.vx * slope.x + robot.vy * slope.y > 0;
-        const pull = climbing ? 3.4 : 2.1;
-        robot.vx -= slope.x * pull * dt;
-        robot.vy -= slope.y * pull * dt;
+        // Gravity along the ramp is the same both ways; only the wheels lose
+        // bite (and top speed) on the way up.
+        robot.vx -= slope.x * ROBOT_RAMP_PULL * dt;
+        robot.vy -= slope.y * ROBOT_RAMP_PULL * dt;
         // Wheels lose a little bite on the incline, so the climb is slower
         // than a flat run at the same throttle.
         const cap = climbing ? setup.bot.stats.maxSpeed / (1 + grade * 1.15) : setup.bot.stats.maxSpeed;
@@ -801,7 +831,11 @@ export class MatchEngine {
       if (input.actions.shoot && setup.bot.shooter.enabled && robot.carrying > 0 && !robot.climb.active) {
         if (this.state.time - robot.lastShotAt >= setup.bot.shooter.cooldown) {
           const shots = Math.min(robot.carrying, 2);
-          for (let i = 0; i < shots; i++) this.shootFuel(robot, setup.bot);
+          for (let i = 0; i < shots; i++) {
+            // A pair leaves side by side instead of from the same point, so the
+            // two balls do not spawn inside each other and scatter.
+            this.shootFuel(robot, setup.bot, shots === 2 ? (i === 0 ? -0.085 : 0.085) : 0);
+          }
           robot.lastShotAt = this.state.time;
         }
       }
@@ -814,71 +848,167 @@ export class MatchEngine {
     }
   }
 
+  /**
+   * Pull one ball out of a robot's hopper. FUEL is conserved: a shot or a drop
+   * reuses the ball object that was picked up, so a 600-ball match stays 600
+   * balls instead of leaking a phantom carried ball per cycle.
+   */
+  private takeCarried(robot: RobotState): FuelObject {
+    const ball = this.state.fuel.find((f) => f.state === 'carried' && f.owner === robot.id);
+    if (ball) {
+      ball.owner = undefined;
+      ball.releasedByHub = undefined;
+      ball.releasedAt = undefined;
+      ball.touchedSinceRelease = false;
+      return ball;
+    }
+    // No object to reuse (a test or a fresh hopper): mint one at the robot so
+    // carrying and the FUEL array never disagree.
+    const fresh: FuelObject = {
+      id: this.fuelCounter++,
+      x: robot.x,
+      y: robot.y,
+      z: 0.45,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      state: 'carried',
+    };
+    this.state.fuel.push(fresh);
+    return fresh;
+  }
+
   private dropFuel(robot: RobotState, count: number): void {
     for (let i = 0; i < count; i++) {
       const angle = robot.heading + this.rng.range(-1.2, 1.2);
       const speed = this.rng.range(0.4, 1.1);
-      this.state.fuel.push({
-        id: this.fuelCounter++,
-        x: robot.x + Math.cos(angle) * 0.45,
-        y: robot.y + Math.sin(angle) * 0.45,
-        z: BALL_RADIUS,
+      const ball = this.takeCarried(robot);
+      Object.assign(ball, {
+        x: robot.x + Math.cos(angle) * (robot.radius + BALL_RADIUS),
+        y: robot.y + Math.sin(angle) * (robot.radius + BALL_RADIUS),
+        // FUEL drops out of a hopper at bumper height, not off the carpet.
+        z: 0.42,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         vz: 0,
-        state: 'field',
+        state: 'flight',
+        shotBy: undefined,
+        shotAt: undefined,
       });
+      this.awake.add(ball.id);
       robot.carrying -= 1;
       if (robot.carrying <= 0) break;
     }
   }
 
-  private shootFuel(robot: RobotState, bot: MatchSetup['robots'][number]['bot']): void {
+  /**
+   * Launch one FUEL ball. The hood is set by range and the flywheel is spun to
+   * the speed that drops the ball into the HUB from there, capped by the
+   * robot's rated muzzle speed (`shooter.power`, in m/s) — the same trade a
+   * 2026 shooter makes between hood angle and rpm. Nothing aims for the driver:
+   * the launch heading is the chassis heading, so a robot that is not squared
+   * up throws the ball past the funnel, and a robot facing away from its HUB
+   * has no range to solve for at all.
+   */
+  private shootFuel(robot: RobotState, bot: MatchSetup['robots'][number]['bot'], side = 0): void {
     const hub = getHub(this.field, robot.alliance);
-    const dx = hub.x - robot.x;
-    const dy = hub.y - robot.y;
-    const dist = Math.hypot(dx, dy);
-    const range = bot.shooter.range;
-    const targetDist = Math.min(dist, range * 1.45);
-    const time = clamp(0.58 + targetDist * 0.1, 0.6, 1.35);
-    const targetX = hub.x;
-    const targetY = hub.y;
-    const spread = (1 - bot.shooter.accuracy) * 0.5;
-    const aimAngle = Math.atan2(targetY - robot.y, targetX - robot.x) + this.rng.range(-spread, spread);
-    // Aim above the funnel rim so the ball clears the HUB's side wall and drops
-    // through the opening instead of bouncing off the panels below it.
-    const targetZ = this.game.hub.rimHeight + 0.35;
-    const speed = targetDist / time;
-    const vx = Math.cos(aimAngle) * speed;
-    const vy = Math.sin(aimAngle) * speed;
-    // The ball leaves the robot's shooter, roughly a half meter off the carpet.
-    // The 2026 HUB opening sits at 72 in, so shots are long arcs; spawning them
-    // above the rim made them appear out of thin air over the robot.
-    const startZ = 0.72;
-    const vz = (targetZ - startZ) / time + 0.5 * GRAVITY * time;
-    const startX = robot.x + Math.cos(robot.heading) * (robot.radius * 0.7);
-    const startY = robot.y + Math.sin(robot.heading) * (robot.radius * 0.7);
-    this.state.fuel.push({
-      id: this.fuelCounter++,
-      x: startX,
-      y: startY,
-      z: startZ,
-      vx,
-      vy,
-      vz,
+    const accuracy = clamp(bot.shooter.accuracy, 0, 1);
+    const yaw = robot.heading + this.rng.range(-(1 - accuracy) * 0.55, (1 - accuracy) * 0.55);
+    // Range is measured along the heading, from the muzzle to the HUB opening:
+    // this is the number a real robot's distance sensor feeds its hood. Facing
+    // away from the HUB leaves no usable range at all. Aiming at the opening
+    // (rather than its near edge) means the arc is already coming back down by
+    // the time it arrives, so it drops in instead of hitting the near panel.
+    const start = robot.radius + 0.16;
+    const toHubX = hub.x - robot.x;
+    const toHubY = hub.y - robot.y;
+    const range = toHubX * Math.cos(robot.heading) + toHubY * Math.sin(robot.heading) - start;
+    const rise = this.game.hub.rimHeight + 0.1 - SHOT_HEIGHT;
+    const launch = this.launchFor(
+      range,
+      rise,
+      // Distance from the muzzle to the HUB's near panel, which the arc has to
+      // clear before it can drop into the opening.
+      range - hub.width / 2,
+      clamp(bot.shooter.power, 3, 14),
+    );
+    const speed = launch.speed;
+    // Accuracy also jitters the hood a little, so marginal shots rattle in and
+    // out of the funnel instead of all landing identically.
+    const angle = clamp(
+      launch.angle + this.rng.range(-(1 - accuracy) * 0.05, (1 - accuracy) * 0.05),
+      0.4,
+      HOOD_MAX,
+    );
+    const groundSpeed = Math.cos(angle) * speed;
+    const fuel = this.takeCarried(robot);
+    Object.assign(fuel, {
+      x: robot.x + Math.cos(yaw) * start - Math.sin(yaw) * side,
+      y: robot.y + Math.sin(yaw) * start + Math.cos(yaw) * side,
+      z: SHOT_HEIGHT,
+      // A shot taken while driving carries the chassis momentum with it, which
+      // is why real robots stop to shoot.
+      vx: Math.cos(yaw) * groundSpeed + robot.vx * 0.45,
+      vy: Math.sin(yaw) * groundSpeed + robot.vy * 0.45,
+      vz: Math.sin(angle) * speed,
       state: 'flight',
       shotBy: robot.id,
       shotAt: this.state.time,
     });
+    this.awake.add(fuel.id);
     robot.carrying -= 1;
+  }
+
+  /**
+   * Pick a hood angle and flywheel speed for a shot. The ball has to satisfy
+   * two things: pass through the opening at `range` on its way down, and be
+   * above the 72 in rim by the time it reaches the HUB's near panel (`face`).
+   * The flattest hood that does both wins, so long shots stay flat and only
+   * point-blank shots turn into a lob. Nothing that needs more than the
+   * flywheel's rated speed is allowed to score, which is what makes standing
+   * closer to the HUB worth doing.
+   */
+  private launchFor(
+    range: number,
+    rise: number,
+    face: number,
+    maxSpeed: number,
+  ): { speed: number; angle: number } {
+    // No usable range ahead (the driver is facing away from the HUB): this is a
+    // dump off the front, not a shot, so it lands a couple of metres away.
+    if (range <= 0.25) return { speed: Math.max(3, maxSpeed * 0.45), angle: 0.5 };
+    for (let degrees = 52; degrees <= 84; degrees += 2) {
+      const angle = (degrees * Math.PI) / 180;
+      const tan = Math.tan(angle);
+      const reach = range * tan - rise;
+      if (reach <= 0) continue;
+      const speed = Math.sqrt((GRAVITY * range * range) / (2 * Math.cos(angle) ** 2 * reach));
+      if (speed > maxSpeed) continue;
+      // A ball touches the panel once its centre is one radius short of it, and
+      // it clears the rim once its underside is above it: both matter.
+      const clear = face - BALL_RADIUS;
+      if (clear > 0.02) {
+        const t = clear / (speed * Math.cos(angle));
+        const z = SHOT_HEIGHT + speed * Math.sin(angle) * t - 0.5 * GRAVITY * t * t;
+        if (z < this.game.hub.rimHeight + BALL_RADIUS + 0.02) continue;
+      }
+      return { speed, angle };
+    }
+    // Nothing clears the panel inside the flywheel's rating: full power, flat,
+    // and the ball falls short or skips off the HUB.
+    return { speed: maxSpeed, angle: SHOT_HOOD };
   }
 
   // ------------------------------------------------------------------- fuel
 
+  /**
+   * Loose FUEL is a real light body: 5.91 in of foam, 0.21 kg, high rolling
+   * drag. Balls collide with each other, with bumpers, with the HUB walls, and
+   * with whatever surface is under them — carpet, BUMP ramps, the HUB roof, the
+   * TRENCH roof — so a corral has to be shoved open instead of driven through.
+   */
   private updateFuel(dt: number, frame: PhysicsFrame): void {
-    const length = this.field.size.length;
-    const width = this.field.size.width;
-    const rim = this.game.hub.rimHeight;
+    this.pushFuelWithRobots(dt, frame);
     for (const fuel of this.state.fuel) {
       if (fuel.state === 'carried') {
         const owner = this.state.robots.find((r) => r.id === fuel.owner);
@@ -890,95 +1020,208 @@ export class MatchEngine {
         continue;
       }
       if (fuel.state === 'scored' || fuel.state === 'inactive') continue;
+      // A ball sitting in an untouched pile stays exactly where it is.
+      if (!this.awake.has(fuel.id)) continue;
 
-      if (fuel.state === 'field') {
-        fuel.vx *= Math.exp(-1.6 * dt);
-        fuel.vy *= Math.exp(-1.6 * dt);
-        // Loose FUEL rolls down the BUMP ramps instead of sitting on them.
+      this.stepFuel(fuel, dt);
+      if ((fuel.state as string) === 'scored' || (fuel.state as string) === 'inactive') continue;
+      this.confineFuel(fuel, frame);
+      if ((fuel.state as string) === 'scored' || (fuel.state as string) === 'inactive') continue;
+      this.tryPickup(fuel, frame);
+    }
+    this.resolveFuelContacts();
+  }
+
+  /**
+   * One ball's own motion. Fast balls are sub-stepped so a shot cannot tunnel
+   * through the rim plane or a HUB panel between two frames.
+   */
+  private stepFuel(fuel: FuelObject, dt: number): void {
+    const rim = this.game.hub.rimHeight;
+    const speed = Math.hypot(fuel.vx, fuel.vy, fuel.vz);
+    const steps = Math.min(4, Math.max(1, Math.ceil((speed * dt) / 0.05)));
+    const h = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      const support = this.supportUnder(fuel.x, fuel.y, fuel.z - BALL_RADIUS + 0.02);
+      const rolling = fuel.z <= support + BALL_RADIUS + 0.012 && fuel.vz <= 0.25;
+      if (rolling) {
+        // Loose FUEL rolls down the BUMP ramps instead of sitting on them, and
+        // loses speed to the carpet the whole way.
         const slope = bumpSlopeAt(this.field, fuel.x, fuel.y);
-        if (slope.x !== 0 || slope.y !== 0) {
-          fuel.vx -= slope.x * 5.4 * dt;
-          fuel.vy -= slope.y * 5.4 * dt;
-        }
-        fuel.x += fuel.vx * dt;
-        fuel.y += fuel.vy * dt;
-        fuel.z = BALL_RADIUS;
-        if (fuel.x < BALL_RADIUS) {
-          fuel.x = BALL_RADIUS;
-          fuel.vx = Math.abs(fuel.vx) * 0.5;
-        }
-        if (fuel.x > length - BALL_RADIUS) {
-          fuel.x = length - BALL_RADIUS;
-          fuel.vx = -Math.abs(fuel.vx) * 0.5;
-        }
-        if (fuel.y < BALL_RADIUS) {
-          fuel.y = BALL_RADIUS;
-          fuel.vy = Math.abs(fuel.vy) * 0.5;
-        }
-        if (fuel.y > width - BALL_RADIUS) {
-          fuel.y = width - BALL_RADIUS;
-          fuel.vy = -Math.abs(fuel.vy) * 0.5;
-        }
-        this.collideBallWithHubs(fuel);
-      } else if (fuel.state === 'flight') {
-        const prevZ = fuel.z;
-        fuel.vz -= GRAVITY * dt;
-        fuel.x += fuel.vx * dt;
-        fuel.y += fuel.vy * dt;
-        fuel.z += fuel.vz * dt;
-        if (prevZ > rim && fuel.z <= rim && fuel.vz < 0) {
-          this.handleHubDescent(fuel);
-          if ((fuel.state as string) === 'scored' || (fuel.state as string) === 'inactive') continue;
-        }
-        if (fuel.z <= BALL_RADIUS) {
-          fuel.z = BALL_RADIUS;
-          if (fuel.vz < -0.6) {
-            fuel.vz = -fuel.vz * 0.32;
-            fuel.vx *= 0.72;
-            fuel.vy *= 0.72;
-          } else {
-            fuel.vz = 0;
-            fuel.state = 'field';
-          }
-        }
-        if (fuel.z < rim) this.collideBallWithHubs(fuel);
-        if (fuel.state === 'field') {
-          fuel.vx *= 0.85;
-          fuel.vy *= 0.85;
-        }
-        const speed = Math.hypot(fuel.vx, fuel.vy, fuel.vz);
-        if (speed > 1) {
-          for (const robot of this.state.robots) {
-            if (robot.id === fuel.shotBy) continue;
-            if (robot.disabled || robot.disqualified) continue;
-            if (Math.hypot(robot.x - fuel.x, robot.y - fuel.y) > robot.radius + BALL_RADIUS) continue;
-            if (fuel.z > 1.25) continue;
-            const shooter = this.state.robots.find((r) => r.id === fuel.shotBy);
-            if (shooter && shooter.alliance !== robot.alliance && speed > 4) {
-              frame.projectileHits.push({ robotId: robot.id, shooterId: shooter.id, speed });
-            }
-            const nx = (fuel.x - robot.x) / (robot.radius || 1);
-            const ny = (fuel.y - robot.y) / (robot.radius || 1);
-            fuel.vx = nx * Math.max(1.5, speed * 0.45);
-            fuel.vy = ny * Math.max(1.5, speed * 0.45);
-            fuel.vz = Math.abs(fuel.vz) * 0.4 + 0.6;
-            break;
-          }
+        fuel.vx -= slope.x * BALL_RAMP_PULL * h;
+        fuel.vy -= slope.y * BALL_RAMP_PULL * h;
+        const roll = Math.hypot(fuel.vx, fuel.vy);
+        const lost = BALL_ROLL_FRICTION * h;
+        if (roll <= lost) {
+          fuel.vx = 0;
+          fuel.vy = 0;
+        } else {
+          fuel.vx -= (fuel.vx / roll) * lost;
+          fuel.vy -= (fuel.vy / roll) * lost;
         }
       }
+      // In the air a ball follows the vacuum arc the shooter solved for, so a
+      // shot lands exactly where its hood and flywheel said it would.
+      const prevZ = fuel.z;
+      fuel.vz -= GRAVITY * h;
+      fuel.x += fuel.vx * h;
+      fuel.y += fuel.vy * h;
+      fuel.z += fuel.vz * h;
+      if (prevZ > rim && fuel.z <= rim && fuel.vz < 0) {
+        this.handleHubDescent(fuel);
+        if (fuel.state === 'scored' || fuel.state === 'inactive') return;
+      }
+      this.landFuel(fuel);
+    }
+    // Everything that has stopped is put back to sleep so a 600-ball field is
+    // not paying for hundreds of resting balls every tick. "Stopped" is
+    // relative to whatever it is resting on, so balls sleeping on the HUB roof
+    // or a TRENCH roof stop too.
+    const rest = this.supportUnder(fuel.x, fuel.y, fuel.z - BALL_RADIUS + 0.02);
+    if (
+      fuel.state === 'field' &&
+      Math.abs(fuel.vz) < 0.05 &&
+      Math.hypot(fuel.vx, fuel.vy) < 0.06 &&
+      fuel.z <= rest + BALL_RADIUS + 0.03
+    ) {
+      fuel.vx = 0;
+      fuel.vy = 0;
+      this.awake.delete(fuel.id);
+    }
+  }
 
-      const out = fuel.x < -0.4 || fuel.x > length + 0.4 || fuel.y < -0.4 || fuel.y > width + 0.4;
-      if (out) {
-        if (fuel.state === 'flight' && fuel.shotBy) {
-          frame.ejections.push({ robotId: fuel.shotBy, fuelId: fuel.id, fuelX: fuel.x, fuelY: fuel.y });
-        }
-        fuel.state = 'inactive';
-        continue;
+  /**
+   * Height of whatever is directly under a ball: the carpet, a BUMP ramp, the
+   * HUB roof (which is a lid with a hole in it) or the TRENCH roof. Surfaces
+   * above the ball's underside are ignored, so a ball can roll underneath the
+   * TRENCH and still land on top of it.
+   */
+  private supportUnder(x: number, y: number, bottom: number): number {
+    let support = 0;
+    const bump = bumpHeightAt(this.field, x, y);
+    if (bump <= bottom + 0.03) support = Math.max(support, bump);
+    const rim = this.game.hub.rimHeight;
+    if (rim <= bottom + 0.03) {
+      for (const hub of this.field.hubs) {
+        if (Math.abs(x - hub.x) > hub.width / 2 || Math.abs(y - hub.y) > hub.depth / 2) continue;
+        if (Math.hypot(x - hub.x, y - hub.y) <= this.game.hub.openingRadius) continue;
+        support = Math.max(support, rim);
       }
+    }
+    for (const trench of this.field.trenches ?? []) {
+      if (trench.height > bottom + 0.03) continue;
+      if (Math.abs(x - trench.x) > trench.depth / 2 || Math.abs(y - trench.y) > trench.width / 2) continue;
+      support = Math.max(support, trench.height);
+    }
+    return support;
+  }
 
-      if (fuel.state === 'field' || fuel.state === 'flight') {
-        this.tryPickup(fuel, frame);
+  /** Rest a ball on the surface under it, bouncing once if it arrives hard. */
+  private landFuel(fuel: FuelObject): void {
+    const ground = this.supportUnder(fuel.x, fuel.y, fuel.z - BALL_RADIUS + 0.02);
+    if (fuel.z > ground + BALL_RADIUS) return;
+    fuel.z = ground + BALL_RADIUS;
+    if (fuel.vz < -0.5) {
+      // Foam on carpet: a short, dead bounce rather than a trampoline.
+      fuel.vz = -fuel.vz * BALL_RESTITUTION;
+      fuel.vx *= 0.86;
+      fuel.vy *= 0.86;
+      return;
+    }
+    fuel.vz = 0;
+    if (fuel.state === 'flight') fuel.state = 'field';
+  }
+
+  /**
+   * Bumpers shove loose FUEL instead of driving through it, and an active
+   * intake pulls it in from the front before the bumper ever touches it.
+   */
+  private pushFuelWithRobots(dt: number, frame: PhysicsFrame): void {
+    for (const fuel of this.state.fuel) {
+      if (fuel.state !== 'field' && fuel.state !== 'flight') continue;
+      // Above the tallest bumper a ball sails over the robot untouched.
+      if (fuel.z > 0.9) continue;
+      for (const robot of this.state.robots) {
+        if (robot.disabled || robot.tipped || robot.climb.active) continue;
+        const dx = fuel.x - robot.x;
+        const dy = fuel.y - robot.y;
+        const distance = Math.hypot(dx, dy);
+        const reach = robot.radius + BALL_RADIUS;
+        if (distance > reach + 0.6) continue;
+        const setup = this.setup.robots.find((r) => r.id === robot.id);
+        const inFront = dx * Math.cos(robot.heading) + dy * Math.sin(robot.heading) > -0.1;
+        if (
+          robot.intakeActive &&
+          setup &&
+          distance > reach * 0.5 &&
+          inFront &&
+          Math.hypot(fuel.vx, fuel.vy) < setup.bot.intake.speed * 1.8
+        ) {
+          const nx = -dx / (distance || 1);
+          const ny = -dy / (distance || 1);
+          fuel.vx += nx * INTAKE_PULL * dt;
+          fuel.vy += ny * INTAKE_PULL * dt;
+          this.awake.add(fuel.id);
+        }
+        if (distance > reach) continue;
+        const nx = distance > 1e-6 ? dx / distance : 1;
+        const ny = distance > 1e-6 ? dy / distance : 0;
+        // Keep the ball outside the bumper instead of letting it sink in.
+        fuel.x = robot.x + nx * reach;
+        fuel.y = robot.y + ny * reach;
+        const relative = (fuel.vx - robot.vx) * nx + (fuel.vy - robot.vy) * ny;
+        if (relative < 0) {
+          const impact = -relative;
+          const shooter = fuel.shotBy
+            ? this.state.robots.find((r) => r.id === fuel.shotBy)
+            : undefined;
+          if (shooter && shooter.alliance !== robot.alliance && impact > 4) {
+            frame.projectileHits.push({ robotId: robot.id, shooterId: shooter.id, speed: impact });
+          }
+          fuel.vx -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * nx;
+          fuel.vy -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * ny;
+          if (impact > 0.6) fuel.vz = Math.max(fuel.vz, Math.min(1.3, impact * 0.16));
+        }
+        this.awake.add(fuel.id);
+        break;
       }
+    }
+  }
+
+  /** Guardrails, HUB panels, BUMP sides and the out-of-bounds line. */
+  private confineFuel(fuel: FuelObject, frame: PhysicsFrame): void {
+    const length = this.field.size.length;
+    const width = this.field.size.width;
+    const rail = this.field.size.wallHeight;
+    // The 20 in polycarbonate guardrail only stops FUEL below it; a ball that
+    // clears the rail is genuinely out of the field.
+    if (fuel.z - BALL_RADIUS < rail) {
+      if (fuel.x < BALL_RADIUS) {
+        fuel.x = BALL_RADIUS;
+        if (fuel.vx < 0) fuel.vx = -fuel.vx * BALL_WALL_RESTITUTION;
+      }
+      if (fuel.x > length - BALL_RADIUS) {
+        fuel.x = length - BALL_RADIUS;
+        if (fuel.vx > 0) fuel.vx = -fuel.vx * BALL_WALL_RESTITUTION;
+      }
+      if (fuel.y < BALL_RADIUS) {
+        fuel.y = BALL_RADIUS;
+        if (fuel.vy < 0) fuel.vy = -fuel.vy * BALL_WALL_RESTITUTION;
+      }
+      if (fuel.y > width - BALL_RADIUS) {
+        fuel.y = width - BALL_RADIUS;
+        if (fuel.vy > 0) fuel.vy = -fuel.vy * BALL_WALL_RESTITUTION;
+      }
+    }
+    this.collideBallWithHubs(fuel);
+    this.collideBallWithBumps(fuel);
+    const out = fuel.x < -0.4 || fuel.x > length + 0.4 || fuel.y < -0.4 || fuel.y > width + 0.4;
+    if (out) {
+      if (fuel.state === 'flight' && fuel.shotBy) {
+        frame.ejections.push({ robotId: fuel.shotBy, fuelId: fuel.id, fuelX: fuel.x, fuelY: fuel.y });
+      }
+      fuel.state = 'inactive';
+      this.awake.delete(fuel.id);
     }
   }
 
@@ -999,6 +1242,111 @@ export class MatchEngine {
     }
   }
 
+  /**
+   * A BUMP is a ramp at each end and a vertical HDPE wall along its sides, so a
+   * ball can roll up the end but has to bounce off the side.
+   */
+  private collideBallWithBumps(fuel: FuelObject): void {
+    for (const bump of this.field.bumps ?? []) {
+      const halfDepth = bump.depth / 2;
+      const halfWidth = bump.width / 2;
+      const dx = fuel.x - bump.x;
+      const dy = fuel.y - bump.y;
+      if (Math.abs(dx) > halfDepth || Math.abs(dy) > halfWidth) continue;
+      const surface = bump.height * (1 - Math.abs(dx) / halfDepth);
+      const bottom = fuel.z - BALL_RADIUS;
+      if (surface <= bottom + 0.02) continue;
+      if (surface - bottom <= 0.04) {
+        // Climbing the ramp: follow the HDPE up over the ridge.
+        fuel.z = surface + BALL_RADIUS;
+        if (fuel.vz < 0) fuel.vz = 0;
+        continue;
+      }
+      const side = Math.sign(dy) || 1;
+      fuel.y = bump.y + side * (halfWidth + BALL_RADIUS);
+      if (fuel.vy * side < 0) fuel.vy = -fuel.vy * BALL_WALL_RESTITUTION;
+    }
+  }
+
+  /**
+   * Ball-to-ball contacts, using a uniform grid so 500+ loose balls cost a few
+   * thousand checks a tick instead of a quarter of a million.
+   */
+  private resolveFuelContacts(): void {
+    const cell = 2 * BALL_RADIUS + 0.02;
+    const cells = new Map<number, number[]>();
+    const fuel = this.state.fuel;
+    for (let i = 0; i < fuel.length; i++) {
+      const ball = fuel[i];
+      if (ball.state !== 'field' && ball.state !== 'flight') continue;
+      const key = (Math.floor(ball.x / cell) + 512) * 4096 + (Math.floor(ball.y / cell) + 512);
+      const bucket = cells.get(key);
+      if (bucket) bucket.push(i);
+      else cells.set(key, [i]);
+    }
+    const offsets: Array<[number, number]> = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 1]];
+    for (const [key, bucket] of cells) {
+      if (bucket.length === 0) continue;
+      const ix = Math.floor(key / 4096) - 512;
+      const iy = (key % 4096) - 512;
+      for (const [ox, oy] of offsets) {
+        const other = cells.get((ix + ox + 512) * 4096 + (iy + oy + 512));
+        if (!other) continue;
+        for (let a = 0; a < bucket.length; a++) {
+          const start = ox === 0 && oy === 0 ? a + 1 : 0;
+          for (let b = start; b < other.length; b++) {
+            this.collideFuelPair(fuel[bucket[a]], fuel[other[b]]);
+          }
+        }
+      }
+    }
+  }
+
+  private collideFuelPair(a: FuelObject, b: FuelObject): void {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const min = 2 * BALL_RADIUS;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= min * min || d2 < 1e-9) return;
+    // Stacked balls are not modelled, so only near-flat contacts count.
+    if (Math.abs(a.z - b.z) > 1.4 * BALL_RADIUS) return;
+    const aAwake = this.awake.has(a.id);
+    const bAwake = this.awake.has(b.id);
+    if (!aAwake && !bAwake) return;
+    const distance = Math.sqrt(d2);
+    const nx = dx / distance;
+    const ny = dy / distance;
+    // Only part of the overlap is fixed per tick, so a freshly woken pile
+    // separates gradually instead of exploding.
+    const correction = Math.min(min - distance, 0.008) * 0.5;
+    a.x -= nx * correction;
+    a.y -= ny * correction;
+    b.x += nx * correction;
+    b.y += ny * correction;
+    const relative = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+    if (relative < 0) {
+      // Equal masses: each ball takes exactly half the impulse.
+      const j = (-(1 + BALL_RESTITUTION) * relative) / 2;
+      a.vx -= j * nx;
+      a.vy -= j * ny;
+      b.vx += j * nx;
+      b.vy += j * ny;
+      // A glancing hit drags the neighbour sideways rather than clacking.
+      const tx = -ny;
+      const ty = nx;
+      const tangential = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
+      const jt = clamp((-tangential / 2) * BALL_CONTACT_FRICTION, -j * 0.5, j * 0.5);
+      a.vx -= jt * tx;
+      a.vy -= jt * ty;
+      b.vx += jt * tx;
+      b.vy += jt * ty;
+      if (Math.abs(relative) > 0.035) {
+        this.awake.add(a.id);
+        this.awake.add(b.id);
+      }
+    }
+  }
+
   private handleHubDescent(fuel: FuelObject): void {
     const shooter = fuel.shotBy ? this.state.robots.find((r) => r.id === fuel.shotBy) : undefined;
     for (const hub of this.field.hubs) {
@@ -1014,6 +1362,10 @@ export class MatchEngine {
       const alliance = hub.alliance;
       if (this.state.hubActive[alliance]) {
         fuel.state = 'scored';
+        fuel.vx = 0;
+        fuel.vy = 0;
+        fuel.vz = 0;
+        this.awake.delete(fuel.id);
         this.state.scores[alliance][this.state.phase === 'auto' ? 'autoFuel' : 'teleopFuel'] += 1;
         if (shooter) shooter.fuelScored += 1;
         this.addScoreEvent(alliance, 'fuel', this.game.scoring.fuel, `FUEL scored in the active ${alliance.toUpperCase()} HUB`, shooter?.id);
@@ -1028,7 +1380,6 @@ export class MatchEngine {
     const hub = getHub(this.field, alliance);
     const towardCenter = this.field.size.length / 2 - hub.x;
     const dir = towardCenter >= 0 ? 1 : -1;
-    fuel.state = 'field';
     fuel.x = hub.x + dir * (hub.width / 2 + 0.35);
     fuel.y = clamp(hub.y + this.rng.range(-0.5, 0.5), 0.5, this.field.size.width - 0.5);
     fuel.z = 0.35;
@@ -1038,6 +1389,8 @@ export class MatchEngine {
     fuel.state = 'flight';
     fuel.shotBy = undefined;
     fuel.shotAt = undefined;
+    // Ejected FUEL is live the moment it leaves the chute.
+    this.awake.add(fuel.id);
     if (markReleased) {
       fuel.releasedByHub = alliance;
       fuel.releasedAt = this.state.time;
@@ -1056,6 +1409,10 @@ export class MatchEngine {
       if (fuel.z > 0.75) continue;
       fuel.state = 'carried';
       fuel.owner = robot.id;
+      fuel.vx = 0;
+      fuel.vy = 0;
+      fuel.vz = 0;
+      this.awake.delete(fuel.id);
       robot.carrying += 1;
       robot.lastPickupAt = this.state.time;
       frame.pickups.push({
@@ -1136,7 +1493,7 @@ export class MatchEngine {
     const point = outpostFeedPoint(this.field, human.alliance);
     const dir = human.alliance === 'red' ? 1 : -1;
     for (let i = 0; i < 3; i++) {
-      this.state.fuel.push({
+      const ball: FuelObject = {
         id: this.fuelCounter++,
         x: point.x + this.rng.range(-0.25, 0.25),
         y: point.y + this.rng.range(-0.35, 0.35),
@@ -1145,7 +1502,9 @@ export class MatchEngine {
         vy: this.rng.range(-0.8, 0.8),
         vz: this.rng.range(1.4, 2.4),
         state: 'flight',
-      });
+      };
+      this.state.fuel.push(ball);
+      this.awake.add(ball.id);
     }
   }
 

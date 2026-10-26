@@ -60,12 +60,17 @@ const CORRAL_DEPTH = 72 * IN; // along the field (x)
 const CORRAL_DIVIDER = 2 * IN;
 const CORRAL_SIDE = (CORRAL_DEPTH - CORRAL_DIVIDER) / 2;
 
-/** §6.3.4: 504 FUEL per match, 24 in each DEPOT and 24 in each OUTPOST CHUTE. */
-export const FUEL_PER_MATCH = 504;
+/**
+ * §6.3.4: 504 FUEL at a regional, and up to 600 at a District Championship or
+ * FIRST Championship, where the extra FUEL joins the NEUTRAL ZONE corral. This
+ * field is the 600-ball Championship setup: 24 per DEPOT, 24 per OUTPOST CHUTE,
+ * up to 48 preloaded, and the remaining 456 corralled on the CENTER LINE.
+ */
+export const FUEL_PER_MATCH = 600;
 export const FUEL_PER_DEPOT = 24;
 export const FUEL_PER_CHUTE = 24;
-/** The rest is corralled in the NEUTRAL ZONE: 360-408 depending on preloads. */
-export const FUEL_NEUTRAL = 360;
+/** The rest is corralled in the NEUTRAL ZONE: 456 in the Championship setup. */
+export const FUEL_NEUTRAL = 456;
 const CORRAL_COUNT = FUEL_NEUTRAL / 2;
 
 export const REBUILT_FIELD: FieldLayout = {
@@ -112,12 +117,12 @@ export const REBUILT_FIELD: FieldLayout = {
     { id: 'red-depot', alliance: 'red', x: DEPOT_DEPTH / 2 + 0.08, y: 6.28, rotation: 0, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
     { id: 'blue-depot', alliance: 'blue', x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.28, rotation: Math.PI, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
   ],
-  // §6.3.4 staging: 504 FUEL per match. 24 sit in each DEPOT (not in a uniform
-  // layout), 24 belong to each human player in the OUTPOST CHUTE, up to 48 are
-  // preloaded in ROBOTS, and the remaining 360 are corralled on the CENTER
-  // LINE inside the manual's 206.0 x 72.0 in bounding box. The two corral
-  // spawns butt against the 2.0 in divider so the kickoff field reads as one
-  // block split down the middle, exactly like Figure 6-3.
+  // §6.3.4 staging at the Championship quantity: 600 FUEL. 24 sit in each
+  // DEPOT (not in a uniform layout), 24 belong to each human player in the
+  // OUTPOST CHUTE, up to 48 are preloaded in ROBOTS, and the remaining 456 are
+  // corralled on the CENTER LINE inside the manual's 206.0 x 72.0 in bounding
+  // box. The two corral spawns butt against the 2.0 in divider so the kickoff
+  // field reads as one block split down the middle, exactly like Figure 6-3.
   // (OUTPOST CHUTE FUEL belongs to its human player and is tracked by the
   // engine, not spawned as loose field FUEL.)
   fuelSpawns: [

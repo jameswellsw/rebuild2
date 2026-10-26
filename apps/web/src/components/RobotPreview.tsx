@@ -19,7 +19,7 @@ function dummyState(config: RobotConfig): RobotSnapshot {
     heading: 0,
     vx: 0,
     vy: 0,
-    carrying: Math.min(3, config.intake.capacity),
+    carrying: config.intake.capacity,
     intakeActive: false,
     expanded: config.arm.enabled ? false : false,
     climb: { active: false, level: 0, progress: 0, locked: false },

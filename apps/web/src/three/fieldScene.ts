@@ -225,10 +225,10 @@ export class FieldScene {
     this.addRobots();
 
     const staged = this.field.fuelSpawns.reduce((n, s) => n + s.count, 0);
-    // A regulation match stages 504 FUEL: 360 corralled on the CENTER LINE, 24
-    // in each DEPOT and 24 in each OUTPOST CHUTE. Leave room for the HP topping
-    // the field back up as well as the kickoff staging.
-    const maxFuel = Math.min(640, Math.round(staged * 1.5) + 24);
+    // A Championship match stages 600 FUEL: 456 corralled on the CENTER LINE,
+    // 24 in each DEPOT and 24 in each OUTPOST CHUTE. Leave room for the HUBs
+    // ejecting FUEL back onto the field as well as the kickoff staging.
+    const maxFuel = Math.min(760, Math.round(staged * 1.45) + 24);
     // Official FUEL is a 5.91 in (150 mm) yellow foam ball with printed marks.
     this.fuelMesh = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.075, 14, 12),
@@ -2217,6 +2217,73 @@ export class FieldScene {
     return Math.min(distance, 90);
   }
 
+  /** Tall structures the driver camera has to see over, as carpet footprints. */
+  private chaseBlockers(): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; top: number }> {
+    const blockers: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; top: number }> = [];
+    const hubTop = REBUILT_2026.hub.rimHeight + 0.18;
+    for (const hub of this.field.hubs) {
+      const half = Math.max(hub.width, hub.depth) / 2 + 0.12;
+      blockers.push({ minX: hub.x - half, maxX: hub.x + half, minZ: hub.y - half, maxZ: hub.y + half, top: hubTop });
+    }
+    // The TOWER's 72 in uprights and its wall.
+    for (const tower of this.field.towers) {
+      blockers.push({
+        minX: tower.x - tower.radius - 0.1,
+        maxX: tower.x + tower.radius + 0.1,
+        minZ: tower.y - tower.radius - 0.1,
+        maxZ: tower.y + tower.radius + 0.1,
+        top: 2.05,
+      });
+    }
+    return blockers;
+  }
+
+  /**
+   * Lift the chase camera until the line from the lens to its look point clears
+   * every HUB and TOWER in the way. Without this the driver gets a screenful of
+   * backboard the moment their robot drives past one.
+   */
+  private clearChase(eye: THREE.Vector3, aim: THREE.Vector3): void {
+    const blockers = this.chaseBlockers();
+    const dx = aim.x - eye.x;
+    const dz = aim.z - eye.z;
+    for (let pass = 0; pass < 3; pass++) {
+      let lift = 0;
+      for (const blocker of blockers) {
+        // Slab test for the stretch of the eye-to-aim segment inside the footprint.
+        let tMin = 0;
+        let tMax = 1;
+        let miss = false;
+        for (const [origin, dir, min, max] of [
+          [eye.x, dx, blocker.minX, blocker.maxX],
+          [eye.z, dz, blocker.minZ, blocker.maxZ],
+        ] as Array<[number, number, number, number]>) {
+          if (Math.abs(dir) < 1e-6) {
+            if (origin < min || origin > max) miss = true;
+            continue;
+          }
+          const t1 = (min - origin) / dir;
+          const t2 = (max - origin) / dir;
+          tMin = Math.max(tMin, Math.min(t1, t2));
+          tMax = Math.min(tMax, Math.max(t1, t2));
+        }
+        if (miss || tMin > tMax || tMax < 0 || tMin > 1) continue;
+        const t = Math.min(0.96, Math.max(0.02, tMin));
+        const height = eye.y + (aim.y - eye.y) * t;
+        const need = blocker.top + 0.3;
+        if (height < need) lift = Math.max(lift, (need - height) / (1 - t));
+      }
+      if (lift < 0.02) break;
+      eye.y += lift;
+    }
+    // Even after the lift, never leave the lens inside a HUB or the TOWER.
+    for (const blocker of blockers) {
+      const inside =
+        eye.x > blocker.minX && eye.x < blocker.maxX && eye.z > blocker.minZ && eye.z < blocker.maxZ;
+      if (inside && eye.y < blocker.top + 0.1) eye.y = blocker.top + 0.1;
+    }
+  }
+
   private updateCamera(dt: number, immediate = false): void {
     const target = new THREE.Vector3();
     const look = new THREE.Vector3();
@@ -2236,17 +2303,19 @@ export class FieldScene {
         // the extra smoothing already applied to the robot mesh.
         const heading = robot.target.heading;
         const forward = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
-        // Sit high enough to see over the walls and the HUB backboards, and far
-        // enough back that the frame is the field rather than a close-up of the
-        // nearest structure. A little outside the walls is fine and keeps the
-        // shot from jumping when a robot backs into a corner.
-        // Close enough that the player's own robot sits in the lower third of
-        // the frame, high enough to see over the 72 in HUB opening ahead.
-        target.copy(pos).addScaledVector(forward, -4.4).add(new THREE.Vector3(0, 2.3, 0));
-        target.x = clamp(target.x, -0.9, field.length + 0.9);
-        target.z = clamp(target.z, -0.9, field.width + 0.9);
-        look.copy(pos).addScaledVector(forward, 5.4).add(new THREE.Vector3(0, 0.9, 0));
-        desiredFov = 58;
+        // Just over the robot's own height and three metres back: close enough
+        // that the machine you are driving fills the lower third of the frame,
+        // low enough that it still reads as a driver's view instead of a crane
+        // shot.
+        target.copy(pos).addScaledVector(forward, -3.2).add(new THREE.Vector3(0, 1.55, 0));
+        // A little outside the guardrails is fine and keeps the shot from
+        // jumping when a robot backs into a corner.
+        target.x = clamp(target.x, -2.2, field.length + 2.2);
+        target.z = clamp(target.z, -2.2, field.width + 2.2);
+        look.copy(pos).addScaledVector(forward, 0.7).add(new THREE.Vector3(0, 0.52, 0));
+        // HUBs and the TOWER are tall enough to sit between lens and robot.
+        this.clearChase(target, look);
+        desiredFov = 60;
         chase = true;
       }
     }
@@ -2369,9 +2438,9 @@ export class FieldScene {
         pos.y += (target.y - pos.y) * 0.35;
         pos.z += (target.z - pos.z) * 0.35;
       }
-      // Keep loose FUEL on the ramp surface when it rolls over a BUMP.
-      const rampHeight = bumpHeightAt(this.field, pos.x, pos.y);
-      this.fuelDummy.position.set(pos.x, pos.z + rampHeight, pos.y);
+      // FUEL height is already absolute: the simulation rests balls on the
+      // carpet, the BUMP ramps, the HUB roof and the TRENCH roof itself.
+      this.fuelDummy.position.set(pos.x, pos.z, pos.y);
       this.fuelDummy.updateMatrix();
       this.fuelMesh.setMatrixAt(count, this.fuelDummy.matrix);
       count++;

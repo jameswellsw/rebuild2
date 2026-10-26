@@ -17,7 +17,7 @@ import { MatchArena } from '../components/match/MatchArena';
 
 function stat(config: RobotConfig, kind: 'speed' | 'intake' | 'score' | 'climb'): number {
   if (kind === 'speed') return Math.min(100, (config.stats.maxSpeed / 5.3) * 100);
-  if (kind === 'intake') return Math.min(100, (config.intake.capacity / 11) * 100);
+  if (kind === 'intake') return Math.min(100, (config.intake.capacity / 60) * 100);
   if (kind === 'score') return config.shooter.enabled ? config.shooter.accuracy * 100 : 0;
   return config.climber.enabled ? (config.climber.maxLevel / 3) * 100 : 0;
 }
@@ -253,7 +253,7 @@ export function SoloPage() {
               <span><kbd>W A S D</kbd> drive</span>
               <span><kbd>Q / E</kbd> rotate</span>
               <span><kbd>Space</kbd> shoot</span>
-              <span><kbd>F</kbd> intake</span>
+              <span><kbd>Shift</kbd> intake</span>
               <span><kbd>C</kbd> climb</span>
               <span><kbd>X</kbd> extend</span>
               <span><kbd>G</kbd> drop</span>
