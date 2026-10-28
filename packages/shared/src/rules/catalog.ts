@@ -29,15 +29,39 @@ export const RULE_CATALOG: RuleDefinition[] = [
     severity: 'warning',
   },
   {
+    id: 'G401',
+    title: 'Behind the lines',
+    category: 'human',
+    summary:
+      'During AUTO, DRIVE TEAM members stay behind the HUMAN STARTING LINE and may not contact anything in front of it, except for safety, an E-stop/A-stop, or with REFEREE/FTA permission.',
+    penalty: 'MINOR FOUL, counted once however many items were contacted.',
+    detection: 'referee-only',
+    simulator: 'Referee call; the human-player console keeps reach behind the alliance wall.',
+    severity: 'minor',
+  },
+  {
+    id: 'G402',
+    title: 'Let the ROBOT do its thing',
+    category: 'human',
+    summary:
+      'During AUTO, DRIVE TEAM members may not directly or indirectly interact with the ROBOT or the OPERATOR CONSOLE, except for safety or an E-stop/A-stop. A HUMAN PLAYER entering FUEL is expressly allowed.',
+    penalty: 'MINOR FOUL + YELLOW CARD.',
+    card: 'yellow',
+    detection: 'referee-only',
+    simulator:
+      'Referee call. Solo practice deliberately lets the driver keep hands on the controls through AUTO, which a real match would not allow.',
+    severity: 'minor',
+  },
+  {
     id: 'G403',
-    title: 'No AUTO contact across the center line',
+    title: 'Stay on your side in AUTO',
     category: 'conduct',
     summary:
-      'A ROBOT whose BUMPERS are completely across the CENTER LINE may not contact an opponent ROBOT during AUTO.',
+      'A ROBOT whose BUMPERS are completely across the CENTER LINE may not contact an opponent ROBOT during AUTO. Team Update 22 tightens this further, prohibiting a robot from completely crossing the CENTER LINE in AUTO at all.',
     penalty: 'MAJOR FOUL',
     detection: 'automatic',
     simulator:
-      'AUTO contacts are checked against each robot’s center-line projection and attributed to the crossing robot.',
+      'AUTO contacts are checked against each robot’s center-line projection and attributed to the crossing robot. The AI never crosses the line in AUTO, which is what a legal AUTO routine looks like.',
     severity: 'major',
   },
   {
@@ -62,6 +86,29 @@ export const RULE_CATALOG: RuleDefinition[] = [
     severity: 'minor',
   },
   {
+    id: 'G406',
+    title: 'Do not abuse SCORING ELEMENTS',
+    category: 'scoring',
+    summary:
+      'ROBOTS and HUMAN PLAYERS may not damage a SCORING ELEMENT. Normal wear such as scratching is allowed; routinely gouging, tearing or marking FUEL is not.',
+    penalty: 'VERBAL WARNING first, then MAJOR FOUL for a repeat in a later MATCH at the event. The ROBOT may also be DISABLED.',
+    detection: 'referee-only',
+    simulator: 'Referee call; FUEL wear is not modelled.',
+    severity: 'major',
+  },
+  {
+    id: 'G407',
+    title: 'Only score while in your ALLIANCE ZONE',
+    category: 'scoring',
+    summary:
+      'A ROBOT may not launch a SCORING ELEMENT into its HUB unless its BUMPERS are partially or fully within its ALLIANCE ZONE.',
+    penalty: 'No score; the head referee may address repeat launches.',
+    detection: 'automatic',
+    simulator:
+      'Every shot is tagged with the launching robot’s ALLIANCE ZONE state. FUEL that would score from outside the zone is ejected from the HUB and logged instead.',
+    severity: 'warning',
+  },
+  {
     id: 'G408',
     title: 'Do not control FUEL released by a HUB',
     category: 'scoring',
@@ -74,6 +121,54 @@ export const RULE_CATALOG: RuleDefinition[] = [
     severity: 'minor',
   },
   {
+    id: 'G409',
+    title: 'ROBOTS must be safe',
+    category: 'robot',
+    summary:
+      'A ROBOT may not create an undue hazard: a controlled object leaving the FIELD, a fully detached BUMPER segment, an exposed ROBOT-perimeter corner, an indeterminate number or colour, BUMPERS repeatedly or too long outside the BUMPER ZONE, or any dangerous design or operation.',
+    penalty: 'The ROBOT is DISABLED; corrective action or re-inspection may follow.',
+    detection: 'review',
+    simulator:
+      'Bumper damage and detachment are physics events in the review queue, and the referee panel can disable the robot, which zeroes its outputs for the rest of the match.',
+    severity: 'warning',
+  },
+  {
+    id: 'G410',
+    title: 'Keep your BUMPERS low',
+    category: 'robot',
+    summary:
+      'An extension may not interact with the carpet, the BUMPS or the TOWER BASE in a way that lifts the BUMPERS out of the BUMPER ZONE.',
+    penalty: 'MINOR FOUL; corrective action or re-inspection may follow.',
+    detection: 'referee-only',
+    simulator: 'Referee call from the event log.',
+    severity: 'minor',
+  },
+  {
+    id: 'G411',
+    title: 'Do not damage the FIELD',
+    category: 'field',
+    summary: 'A ROBOT may not damage FIELD elements.',
+    penalty:
+      'VERBAL WARNING first; the ROBOT may be DISABLED if more damage is likely, and later damage during the event is a YELLOW CARD.',
+    card: 'conditional',
+    detection: 'referee-only',
+    simulator: 'Referee call; the impact log keeps the contact that caused it.',
+    severity: 'warning',
+  },
+  {
+    id: 'G412',
+    title: 'Watch your FIELD interaction',
+    category: 'field',
+    summary:
+      'Except for RUNGS and UPRIGHTS, a ROBOT may not grab, grasp, attach to, become entangled with or suspend from a FIELD element, including vacuum or hook attachments to the carpet.',
+    penalty: 'MAJOR FOUL; YELLOW CARD if repeated or longer than MOMENTARY. The ROBOT may be DISABLED if damage is likely.',
+    card: 'conditional',
+    detection: 'review',
+    simulator:
+      'TOWER contact and climbing are modelled; grabbing and entanglement physics are queued for referee review.',
+    severity: 'major',
+  },
+  {
     id: 'G413',
     title: 'Expansion limits',
     category: 'robot',
@@ -84,6 +179,16 @@ export const RULE_CATALOG: RuleDefinition[] = [
     simulator:
       'The expander is a simulated mechanism. Over-expansion while near a HUB or while contacting an opponent is upgraded to major.',
     severity: 'minor',
+  },
+  {
+    id: 'G414',
+    title: 'Do not climb on each other',
+    category: 'conduct',
+    summary: 'ROBOTS may not fully support the weight of alliance ROBOTS to climb the TOWER.',
+    penalty: 'No point foul: the supported ROBOTS are ineligible for TOWER points for the rest of the MATCH.',
+    detection: 'referee-only',
+    simulator: 'Referee call; robots in this sim do not stack, so a supported climb cannot occur.',
+    severity: 'warning',
   },
   {
     id: 'G415',
@@ -165,6 +270,19 @@ export const RULE_CATALOG: RuleDefinition[] = [
     severity: 'minor',
   },
   {
+    id: 'G422',
+    title: 'Hands off the controls',
+    category: 'human',
+    summary:
+      'Only the team’s DRIVERS and/or HUMAN PLAYERS may operate the ROBOT; a DRIVE COACH may only activate the E-stop or A-stop.',
+    penalty: 'MAJOR FOUL; RED CARD if the violation is greater than MOMENTARY.',
+    card: 'conditional',
+    detection: 'referee-only',
+    simulator:
+      'The room server accepts driver input only from the seat bound to that ROBOT, so another team’s controls never reach the sim.',
+    severity: 'major',
+  },
+  {
     id: 'G423',
     title: 'CHUTE and CORRAL reach limits',
     category: 'human',
@@ -195,6 +313,16 @@ export const RULE_CATALOG: RuleDefinition[] = [
     detection: 'automatic',
     simulator: 'The human-player console only offers legal delivery points; any forced override is flagged.',
     severity: 'major',
+  },
+  {
+    id: 'G426',
+    title: 'DRIVE COACHES, SCORING ELEMENTS are off limits',
+    category: 'human',
+    summary: 'DRIVE COACHES may not touch SCORING ELEMENTS except for safety.',
+    penalty: 'MINOR FOUL.',
+    detection: 'referee-only',
+    simulator: 'Referee call from the event log.',
+    severity: 'minor',
   },
   {
     id: 'G427',

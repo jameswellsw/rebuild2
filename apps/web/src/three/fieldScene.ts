@@ -117,6 +117,8 @@ export class FieldScene {
   private readonly fuelMesh: THREE.InstancedMesh;
   private readonly fuelDummy = new THREE.Object3D();
   private readonly fuelDisplay = new Map<number, { x: number; y: number; z: number }>();
+  /** Ball ids drawn this frame; reused so the fuel pass allocates nothing. */
+  private readonly fuelSeen = new Set<number>();
   private fuelTargets: Array<{ id: number; x: number; y: number; z: number }> = [];
   private readonly hubGlow: Record<'red' | 'blue', THREE.MeshStandardMaterial[]> = { red: [], blue: [] };
   /** FUEL stacked in each OUTPOST chute, driven by the human player's stock. */
@@ -137,6 +139,18 @@ export class FieldScene {
   private bloom: UnrealBloomPass | null = null;
   private postEnabled = true;
   private slowFrames = 0;
+  /** HUB/TOWER footprints the chase camera lifts over; the field never moves. */
+  private chaseBlockerCache: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; top: number }> | null =
+    null;
+  /** Scratch vectors for the per-frame camera solve. */
+  private readonly tmpTarget = new THREE.Vector3();
+  private readonly tmpLook = new THREE.Vector3();
+  private readonly tmpDirection = new THREE.Vector3();
+  private readonly tmpOffset = new THREE.Vector3();
+  private readonly tmpForward = new THREE.Vector3();
+  /** Framing distance for the fixed cameras, cached per mode and window shape. */
+  private fitCacheKey = '';
+  private fitCacheValue = 0;
   /** Venue video boards: one canvas driving every screen in the arena. */
   private boardCanvas: HTMLCanvasElement | null = null;
   private boardCtx: CanvasRenderingContext2D | null = null;
@@ -225,9 +239,10 @@ export class FieldScene {
     this.addRobots();
 
     const staged = this.field.fuelSpawns.reduce((n, s) => n + s.count, 0);
-    // A Championship match stages 600 FUEL: 456 corralled on the CENTER LINE,
-    // 24 in each DEPOT and 24 in each OUTPOST CHUTE. Leave room for the HUBs
-    // ejecting FUEL back onto the field as well as the kickoff staging.
+    // A standard match stages 504 FUEL: 360 corralled on the CENTER LINE, 24 in
+    // each DEPOT and 24 in each OUTPOST CHUTE (600, with 456 corralled, on the
+    // Championship field). Leave room for the HUBs ejecting FUEL back onto the
+    // field and for human feeds, as well as the kickoff staging.
     const maxFuel = Math.min(760, Math.round(staged * 1.45) + 24);
     // Official FUEL is a 5.91 in (150 mm) yellow foam ball with printed marks.
     this.fuelMesh = new THREE.InstancedMesh(
@@ -2050,6 +2065,7 @@ export class FieldScene {
         x: spot.x,
         y: spot.y,
         heading: spot.heading,
+        turretYaw: 0,
         vx: 0,
         vy: 0,
         carrying: 0,
@@ -2219,6 +2235,9 @@ export class FieldScene {
 
   /** Tall structures the driver camera has to see over, as carpet footprints. */
   private chaseBlockers(): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; top: number }> {
+    // The field is fixed for the life of the scene, so this footprint list is
+    // built once instead of on every driver-camera frame.
+    if (this.chaseBlockerCache) return this.chaseBlockerCache;
     const blockers: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; top: number }> = [];
     const hubTop = REBUILT_2026.hub.rimHeight + 0.18;
     for (const hub of this.field.hubs) {
@@ -2235,6 +2254,7 @@ export class FieldScene {
         top: 2.05,
       });
     }
+    this.chaseBlockerCache = blockers;
     return blockers;
   }
 
@@ -2285,9 +2305,11 @@ export class FieldScene {
   }
 
   private updateCamera(dt: number, immediate = false): void {
-    const target = new THREE.Vector3();
-    const look = new THREE.Vector3();
-    const direction = new THREE.Vector3();
+    // Reused scratch vectors: this runs every frame, so it should not hand the
+    // garbage collector a handful of Vector3s sixty times a second.
+    const target = this.tmpTarget;
+    const look = this.tmpLook;
+    const direction = this.tmpDirection;
     const field = this.field.size;
     const mode = this.cameraMode === 'driver' && !this.focusRobotId ? 'broadcast' : this.cameraMode;
     const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -2302,17 +2324,17 @@ export class FieldScene {
         // Use the authoritative heading so the chase camera does not inherit
         // the extra smoothing already applied to the robot mesh.
         const heading = robot.target.heading;
-        const forward = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
+        const forward = this.tmpForward.set(Math.cos(heading), 0, Math.sin(heading));
         // Just over the robot's own height and three metres back: close enough
         // that the machine you are driving fills the lower third of the frame,
         // low enough that it still reads as a driver's view instead of a crane
         // shot.
-        target.copy(pos).addScaledVector(forward, -3.2).add(new THREE.Vector3(0, 1.55, 0));
+        target.copy(pos).addScaledVector(forward, -3.2).add(this.tmpOffset.set(0, 1.55, 0));
         // A little outside the guardrails is fine and keeps the shot from
         // jumping when a robot backs into a corner.
         target.x = clamp(target.x, -2.2, field.length + 2.2);
         target.z = clamp(target.z, -2.2, field.width + 2.2);
-        look.copy(pos).addScaledVector(forward, 0.7).add(new THREE.Vector3(0, 0.52, 0));
+        look.copy(pos).addScaledVector(forward, 0.7).add(this.tmpOffset.set(0, 0.52, 0));
         // HUBs and the TOWER are tall enough to sit between lens and robot.
         this.clearChase(target, look);
         desiredFov = 60;
@@ -2352,7 +2374,20 @@ export class FieldScene {
           )
           .normalize();
       }
-      target.copy(look).addScaledVector(direction, this.fitDistance(look, direction, this.fieldFitPoints, fill, desiredFov));
+      // Framing depends only on the lens direction and the window shape, so
+      // the fixed broadcast and top angles solve it once per aspect ratio
+      // instead of running five projection passes every frame. The orbit
+      // camera swings, so it keeps solving each frame.
+      if (mode === 'orbit') {
+        target.copy(look).addScaledVector(direction, this.fitDistance(look, direction, this.fieldFitPoints, fill, desiredFov));
+      } else {
+        const key = `${mode}|${this.camera.aspect.toFixed(4)}|${fill}|${desiredFov}`;
+        if (key !== this.fitCacheKey) {
+          this.fitCacheKey = key;
+          this.fitCacheValue = this.fitDistance(look, direction, this.fieldFitPoints, fill, desiredFov);
+        }
+        target.copy(look).addScaledVector(direction, this.fitCacheValue);
+      }
     }
     // The lighting rig is only drawn for the driver camera: from the wide
     // cameras it sits between the lens and the carpet.
@@ -2425,7 +2460,8 @@ export class FieldScene {
     }
     // Fuel interpolation, keeping shots smooth between 15 Hz snapshots.
     const display = this.fuelDisplay;
-    const seen = new Set<number>();
+    const seen = this.fuelSeen;
+    seen.clear();
     let count = 0;
     for (const target of this.fuelTargets) {
       seen.add(target.id);

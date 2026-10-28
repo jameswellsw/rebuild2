@@ -36,7 +36,7 @@ const featureCards: Array<{ icon: IconName; kicker: string; title: string; body:
 const ruleHighlights = ['G418', 'G413', 'G101', 'G420'];
 
 function statValue(config: RobotConfig, kind: 'speed' | 'intake' | 'score' | 'climb'): number {
-  if (kind === 'speed') return Math.min(100, (config.stats.maxSpeed / 5.3) * 100);
+  if (kind === 'speed') return Math.min(100, (config.stats.maxSpeed / 4.6) * 100);
   if (kind === 'intake') return Math.min(100, (config.intake.capacity / 60) * 100);
   if (kind === 'score') return config.shooter.enabled ? config.shooter.accuracy * 100 : 0;
   return config.climber.enabled ? (config.climber.maxLevel / 3) * 100 : 0;

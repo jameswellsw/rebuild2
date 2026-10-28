@@ -2,7 +2,6 @@ import { DEFAULT_GAME, type GameDefinition } from '../games/rebuilt2026.js';
 import { getRule } from '../rules/catalog.js';
 import {
   RuleEngine,
-  type PhysicsContact,
   type PhysicsFrame,
   type RuleCallOptions,
   type RuleSink,
@@ -35,6 +34,7 @@ import {
   bumpSlopeAt,
   getHub,
   getTower,
+  inAllianceZone,
   outpostFeedPoint,
   startingSpot,
   towerDistance,
@@ -70,6 +70,18 @@ function fuelCeilingFor(field: FieldLayout): number {
   return Math.round(field.fuelSpawns.reduce((total, spawn) => total + spawn.count, 0) * 1.45);
 }
 const REVIEW_DELAY = 6;
+/** FUEL contact grid: cells are two ball widths wide, so neighbours share cells. */
+const FUEL_GRID_CELL = 2 * BALL_RADIUS + 0.02;
+/** Cells of margin around the field, so FUEL leaving the carpet still has a cell. */
+const FUEL_GRID_BIAS = 6;
+/** The five cells searched from a ball's own cell: itself plus its +x/+y neighbours. */
+const FUEL_CELL_OFFSET_X = [0, 1, 0, 1, -1];
+const FUEL_CELL_OFFSET_Y = [0, 0, 1, 1, 1];
+/** Two FUEL balls touch below this centre distance. */
+const FUEL_MIN_DISTANCE = 2 * BALL_RADIUS;
+const FUEL_MIN_DISTANCE_SQ = FUEL_MIN_DISTANCE * FUEL_MIN_DISTANCE;
+/** Stacked FUEL is not modelled, so only near-flat contacts count. */
+const FUEL_CONTACT_Z_TOLERANCE = 1.4 * BALL_RADIUS;
 
 type RefResult = { ok: boolean; message: string; event?: RuleEvent };
 
@@ -149,14 +161,50 @@ export class MatchEngine {
   private readonly startingFuel: number;
   private readonly tippedAt = new Map<string, number>();
   private readonly omega = new Map<string, number>();
+  /** Last time each robot was warned about scoring from outside its zone (G407). */
+  private readonly zoneWarnedAt = new Map<string, number>();
   /**
    * Loose balls that are actually moving. FUEL is staged in tightly packed
    * corrals, so hundreds of balls start asleep: overlapping neighbours would
    * otherwise blow the pile apart on the first tick. A ball wakes when a robot
    * touches it, when a moving ball hits it, and goes back to sleep once it has
-   * settled.
+   * settled. Tracked as a flag byte per ball id: a Set charges a hash lookup
+   * for every ball, every tick, and this loop touches all of them.
    */
-  private readonly awake = new Set<number>();
+  private awakeFlags = new Uint8Array(2048);
+  /** Robot lookups built once: a match's roster never changes. */
+  private readonly setupById = new Map<string, MatchSetup['robots'][number]>();
+  private readonly botById = new Map<string, MatchSetup['robots'][number]['bot']>();
+  private readonly robotById = new Map<string, RobotState>();
+  private readonly massById = new Map<string, number>();
+  private readonly gripById = new Map<string, number>();
+  /**
+   * Inputs sampled once per fixed step. `inputFor` used to be asked by four
+   * subsystems a tick, which meant four AI evaluations per robot per tick.
+   */
+  private readonly tickInputs = new Map<string, DriverInput>();
+  /**
+   * FUEL contact grid, one bucket per cell and indexed directly, so a 600-ball
+   * field never hashes a Map key. Buckets keep their capacity between ticks.
+   */
+  private fuelGrid: Array<number[] | undefined> = [];
+  private readonly fuelCellKeys: number[] = [];
+  private fuelGridCols = 1;
+  private fuelGridRows = 1;
+  /** Robots that can shove FUEL this tick, refilled in place every tick. */
+  private readonly pusherRobots: RobotState[] = [];
+  /** One physics frame per engine, cleared and refilled every fixed step. */
+  private readonly frame: PhysicsFrame = {
+    dt: FIXED_DT,
+    contacts: [],
+    inputs: {},
+    pickups: [],
+    ejections: [],
+    projectileHits: [],
+    newTips: [],
+    newDamage: [],
+  };
+  private sinkCache: RuleSink | null = null;
 
   constructor(setup: MatchSetup, options: EngineOptions = {}) {
     this.game = options.game ?? DEFAULT_GAME;
@@ -212,6 +260,7 @@ export class MatchEngine {
         x: spot.x,
         y: spot.y,
         heading: spot.heading,
+        turretYaw: 0,
         vx: 0,
         vy: 0,
         radius,
@@ -234,6 +283,21 @@ export class MatchEngine {
         ping: 0,
       });
       if (setupRobot.controller === 'ai') this.aiControlled.add(setupRobot.id);
+    }
+
+    this.fuelGridCols = Math.ceil(this.field.size.length / FUEL_GRID_CELL) + 2 * FUEL_GRID_BIAS;
+    this.fuelGridRows = Math.ceil(this.field.size.width / FUEL_GRID_CELL) + 2 * FUEL_GRID_BIAS;
+    this.fuelGrid = new Array<number[] | undefined>(this.fuelGridCols * this.fuelGridRows);
+    for (const setupRobot of this.setup.robots) {
+      this.setupById.set(setupRobot.id, setupRobot);
+      this.botById.set(setupRobot.id, setupRobot.bot);
+    }
+    for (const robot of robots) {
+      this.robotById.set(robot.id, robot);
+      const bot = this.botById.get(robot.id);
+      this.massById.set(robot.id, bot?.chassis.mass ?? 40);
+      // Traction decides how hard the wheels can bite; see moveRobots.
+      this.gripById.set(robot.id, clamp(bot?.stats.grip ?? 0.8, 0.2, 1));
     }
 
     const fuel = this.spawnInitialFuel();
@@ -375,7 +439,7 @@ export class MatchEngine {
   setAiControl(robotId: string, enabled: boolean): void {
     if (enabled) this.aiControlled.add(robotId);
     else this.aiControlled.delete(robotId);
-    const setup = this.setup.robots.find((r) => r.id === robotId);
+    const setup = this.setupById.get(robotId);
     if (setup) setup.controller = enabled ? 'ai' : 'human';
     const robot = this.state.robots.find((r) => r.id === robotId);
     if (robot) robot.controller = enabled ? 'ai' : 'human';
@@ -385,12 +449,23 @@ export class MatchEngine {
     return this.inputs.get(robotId) ?? ZERO_INPUT;
   }
 
-  inputFor(robot: RobotState): DriverInput {
+  private computeInputFor(robot: RobotState): DriverInput {
     if (robot.disconnected) return ZERO_INPUT;
     if (this.aiControlled.has(robot.id)) {
       return computeAIInput(robot, this.state, this.field, this.state.tick);
     }
     return this.getInput(robot.id);
+  }
+
+  /** Sample every driver once per tick, so AI means one evaluation per robot. */
+  private captureInputs(): void {
+    for (const robot of this.state.robots) {
+      this.tickInputs.set(robot.id, this.computeInputFor(robot));
+    }
+  }
+
+  inputFor(robot: RobotState): DriverInput {
+    return this.tickInputs.get(robot.id) ?? this.computeInputFor(robot);
   }
 
   // ------------------------------------------------------------------ step
@@ -430,26 +505,19 @@ export class MatchEngine {
 
     this.state.time = Math.min(this.game.timing.total, this.state.time + dt);
     this.syncPhase();
+    // One input sample per robot for the whole tick: AI, physics and the rule
+    // engine all read the same decision instead of each asking for their own.
+    this.captureInputs();
+    const frame = this.beginFrame(dt);
     this.updateHumans(dt);
     this.moveRobots(dt);
-    const collision = this.resolveRobotCollisions();
+    this.resolveRobotCollisions(frame);
     this.resolveEnvironment();
     this.updateRecovery(dt);
-    const frame: PhysicsFrame = {
-      dt,
-      contacts: collision.contacts,
-      inputs: {},
-      pickups: [],
-      ejections: [],
-      projectileHits: [],
-      newTips: collision.tips,
-      newDamage: collision.damage,
-    };
     for (const robot of this.state.robots) frame.inputs[robot.id] = this.inputFor(robot);
     this.handleActions(dt, frame);
     this.updateFuel(dt, frame);
-    this.updateClimb(dt);
-    this.rules.tick(dt, this.state, frame, this.ruleSink());
+    this.updateClimb(dt);      this.rules.tick(dt, this.state, frame, this.ruleSink());
     this.processReviewTimeouts();
     this.recomputeAll();
 
@@ -544,11 +612,74 @@ export class MatchEngine {
     return ['auto', 'transition', 'shift1', 'shift2', 'shift3', 'shift4', 'endgame'].includes(this.state.phase);
   }
 
+  // ------------------------------------------------------------ fuel state
+
+  /** Wake a loose ball so it is stepped this tick. */
+  private markAwake(id: number): void {
+    if (id >= this.awakeFlags.length) this.growAwakeFlags(id);
+    this.awakeFlags[id] = 1;
+  }
+
+  private isAwake(id: number): boolean {
+    return id < this.awakeFlags.length && this.awakeFlags[id] === 1;
+  }
+
+  /** Put a settled ball back to sleep until something disturbs it. */
+  private sleepFuel(id: number): void {
+    if (id < this.awakeFlags.length) this.awakeFlags[id] = 0;
+  }
+
+  private growAwakeFlags(id: number): void {
+    let size = this.awakeFlags.length;
+    while (size <= id) size *= 2;
+    const next = new Uint8Array(size);
+    next.set(this.awakeFlags);
+    this.awakeFlags = next;
+  }
+
   // --------------------------------------------------------------- movement
 
-  private moveRobots(dt: number): void {
+  /** Clear and reuse the engine's single physics frame. */
+  private beginFrame(dt: number): PhysicsFrame {
+    const frame = this.frame;
+    frame.dt = dt;
+    frame.contacts.length = 0;
+    frame.pickups.length = 0;
+    frame.ejections.length = 0;
+    frame.projectileHits.length = 0;
+    frame.newTips.length = 0;
+    frame.newDamage.length = 0;
+    return frame;
+  }
+
+  /**
+   * Auto-aim. A launcher on a powered azimuth axis tracks the HUB on its own,
+   * inside the arc the mechanism can actually travel: a fixed mount keeps a zero
+   * offset and fires wherever the chassis points, a turret keeps the shot on
+   * target while the driver is still rotating, and clamps at its stops when the
+   * HUB falls outside the arc — the same failure a real turret has.
+   */
+  private updateTurrets(dt: number): void {
     for (const robot of this.state.robots) {
-      const setup = this.setup.robots.find((r) => r.id === robot.id);
+      const spec = this.botById.get(robot.id)?.shooter;
+      if (!spec?.turret || spec.turretArc <= 0 || robot.disabled || robot.tipped || robot.disqualified) {
+        robot.turretYaw = 0;
+        continue;
+      }
+      const hub = getHub(this.field, robot.alliance);
+      const desired = Math.atan2(hub.y - robot.y, hub.x - robot.x);
+      // Shortest way round, then clamped to the mechanism's travel.
+      const rel = Math.atan2(Math.sin(desired - robot.heading), Math.cos(desired - robot.heading));
+      const want = clamp(rel, -spec.turretArc, spec.turretArc);
+      const step = Math.max(0.2, spec.turretSlew) * dt;
+      robot.turretYaw += clamp(want - robot.turretYaw, -step, step);
+    }
+  }
+
+  private moveRobots(dt: number): void {
+    this.updateTurrets(dt);
+    for (const robot of this.state.robots) {
+      const setup = this.setupById.get(robot.id);
       if (!setup) continue;
       const input = this.inputFor(robot);
       const grip = clamp(setup.bot.stats.grip || 0.8, 0.2, 1);
@@ -605,15 +736,14 @@ export class MatchEngine {
       robot.heading = (robot.heading + nextOmega * dt + Math.PI * 4) % (Math.PI * 2);
       // BUMPs are real ramps, not paint: crossing one costs momentum on the
       // way up and gives it back on the way down (§5.5, 15° HDPE).
-      const slope = bumpSlopeAt(this.field, robot.x, robot.y);
-      if (slope.x !== 0 || slope.y !== 0) {
-        const grade = Math.hypot(slope.x, slope.y);
+      const slopeX = this.bumpSlopeXAt(robot.x, robot.y);
+      if (slopeX !== 0) {
+        const grade = Math.abs(slopeX);
         // Moving against the gradient is a climb; with it is a descent.
-        const climbing = robot.vx * slope.x + robot.vy * slope.y > 0;
+        const climbing = robot.vx * slopeX > 0;
         // Gravity along the ramp is the same both ways; only the wheels lose
         // bite (and top speed) on the way up.
-        robot.vx -= slope.x * ROBOT_RAMP_PULL * dt;
-        robot.vy -= slope.y * ROBOT_RAMP_PULL * dt;
+        robot.vx -= slopeX * ROBOT_RAMP_PULL * dt;
         // Wheels lose a little bite on the incline, so the climb is slower
         // than a flat run at the same throttle.
         const cap = climbing ? setup.bot.stats.maxSpeed / (1 + grade * 1.15) : setup.bot.stats.maxSpeed;
@@ -628,22 +758,28 @@ export class MatchEngine {
     }
   }
 
-  private resolveRobotCollisions(): {
-    contacts: PhysicsContact[];
-    tips: PhysicsFrame['newTips'];
-    damage: PhysicsFrame['newDamage'];
-  } {
-    const contacts: PhysicsContact[] = [];
-    const tips: PhysicsFrame['newTips'] = [];
-    const damage: PhysicsFrame['newDamage'] = [];
-    const robots = this.state.robots;
-    const masses = new Map<string, number>();
-    const grips = new Map<string, number>();
-    for (const r of robots) {
-      const bot = this.setup.robots.find((s) => s.id === r.id)?.bot;
-      masses.set(r.id, bot?.chassis.mass ?? 40);
-      grips.set(r.id, clamp(bot?.stats.grip ?? 0.8, 0.2, 1));
+  /**
+   * Rise per metre of the BUMP ramp under a point, matching `bumpSlopeAt`.
+   * Inlined here so a robot that is nowhere near a BUMP allocates nothing.
+   */
+  private bumpSlopeXAt(x: number, y: number): number {
+    for (const bump of this.field.bumps ?? []) {
+      const dx = x - bump.x;
+      const dy = Math.abs(y - bump.y);
+      if (Math.abs(dx) > bump.depth / 2 || dy > bump.width / 2) continue;
+      return (bump.height / (bump.depth / 2)) * (dx === 0 ? 0 : -Math.sign(dx));
     }
+    return 0;
+  }
+
+  private resolveRobotCollisions(frame: PhysicsFrame): void {
+    const contacts = frame.contacts;
+    const tips = frame.newTips;
+    const damage = frame.newDamage;
+    const robots = this.state.robots;
+    // Mass and grip are precomputed once; the roster is fixed for the match.
+    const masses = this.massById;
+    const grips = this.gripById;
     // Bumper contacts are resolved over a few passes: one pass can push a robot
     // into a third robot, and leftover overlap is what makes robots look like
     // they are sinking into each other.
@@ -718,7 +854,6 @@ export class MatchEngine {
         }
       }
     }
-    return { contacts, tips, damage };
   }
 
   /**
@@ -815,7 +950,7 @@ export class MatchEngine {
 
   private handleActions(dt: number, frame: PhysicsFrame): void {
     for (const robot of this.state.robots) {
-      const setup = this.setup.robots.find((r) => r.id === robot.id);
+      const setup = this.setupById.get(robot.id);
       if (!setup) continue;
       const input = this.inputFor(robot);
       const prev = this.prevActions.get(robot.id) ?? ZERO_INPUT.actions;
@@ -860,6 +995,7 @@ export class MatchEngine {
       ball.releasedByHub = undefined;
       ball.releasedAt = undefined;
       ball.touchedSinceRelease = false;
+      ball.launchedInZone = undefined;
       return ball;
     }
     // No object to reuse (a test or a fresh hopper): mint one at the robot so
@@ -895,7 +1031,7 @@ export class MatchEngine {
         shotBy: undefined,
         shotAt: undefined,
       });
-      this.awake.add(ball.id);
+      this.markAwake(ball.id);
       robot.carrying -= 1;
       if (robot.carrying <= 0) break;
     }
@@ -905,24 +1041,28 @@ export class MatchEngine {
    * Launch one FUEL ball. The hood is set by range and the flywheel is spun to
    * the speed that drops the ball into the HUB from there, capped by the
    * robot's rated muzzle speed (`shooter.power`, in m/s) — the same trade a
-   * 2026 shooter makes between hood angle and rpm. Nothing aims for the driver:
-   * the launch heading is the chassis heading, so a robot that is not squared
-   * up throws the ball past the funnel, and a robot facing away from its HUB
-   * has no range to solve for at all.
+   * 2026 shooter makes between hood angle and rpm. The launch heading is the
+   * muzzle heading: a fixed launcher throws the ball wherever the chassis
+   * points, while a launcher on an azimuth axis solves the shot from the angle
+   * its auto-aim has reached, which is why a turreted robot can score with the
+   * chassis still turning.
    */
   private shootFuel(robot: RobotState, bot: MatchSetup['robots'][number]['bot'], side = 0): void {
     const hub = getHub(this.field, robot.alliance);
     const accuracy = clamp(bot.shooter.accuracy, 0, 1);
-    const yaw = robot.heading + this.rng.range(-(1 - accuracy) * 0.55, (1 - accuracy) * 0.55);
-    // Range is measured along the heading, from the muzzle to the HUB opening:
-    // this is the number a real robot's distance sensor feeds its hood. Facing
-    // away from the HUB leaves no usable range at all. Aiming at the opening
-    // (rather than its near edge) means the arc is already coming back down by
-    // the time it arrives, so it drops in instead of hitting the near panel.
+    // Where the muzzle is actually pointing, auto-aim included.
+    const aim = robot.heading + robot.turretYaw;
+    const yaw = aim + this.rng.range(-(1 - accuracy) * 0.55, (1 - accuracy) * 0.55);
+    // Range is measured along the muzzle heading, from the muzzle to the HUB
+    // opening: this is the number a real robot's distance sensor feeds its hood.
+    // A fixed launcher facing away has no usable range at all. Aiming at the
+    // opening (rather than its near edge) means the arc is already coming back
+    // down by the time it arrives, so it drops in instead of hitting the near
+    // panel.
     const start = robot.radius + 0.16;
     const toHubX = hub.x - robot.x;
     const toHubY = hub.y - robot.y;
-    const range = toHubX * Math.cos(robot.heading) + toHubY * Math.sin(robot.heading) - start;
+    const range = toHubX * Math.cos(aim) + toHubY * Math.sin(aim) - start;
     const rise = this.game.hub.rimHeight + 0.1 - SHOT_HEIGHT;
     const launch = this.launchFor(
       range,
@@ -954,8 +1094,11 @@ export class MatchEngine {
       state: 'flight',
       shotBy: robot.id,
       shotAt: this.state.time,
+      // G407 is measured at launch: bumpers in the ALLIANCE ZONE, or the shot
+      // cannot score no matter where the ball comes down.
+      launchedInZone: inAllianceZone(this.field, robot.alliance, robot.x, robot.radius),
     });
-    this.awake.add(fuel.id);
+    this.markAwake(fuel.id);
     robot.carrying -= 1;
   }
 
@@ -1011,7 +1154,7 @@ export class MatchEngine {
     this.pushFuelWithRobots(dt, frame);
     for (const fuel of this.state.fuel) {
       if (fuel.state === 'carried') {
-        const owner = this.state.robots.find((r) => r.id === fuel.owner);
+        const owner = fuel.owner ? this.robotById.get(fuel.owner) : undefined;
         if (owner) {
           fuel.x = owner.x;
           fuel.y = owner.y;
@@ -1021,7 +1164,7 @@ export class MatchEngine {
       }
       if (fuel.state === 'scored' || fuel.state === 'inactive') continue;
       // A ball sitting in an untouched pile stays exactly where it is.
-      if (!this.awake.has(fuel.id)) continue;
+      if (!this.isAwake(fuel.id)) continue;
 
       this.stepFuel(fuel, dt);
       if ((fuel.state as string) === 'scored' || (fuel.state as string) === 'inactive') continue;
@@ -1086,7 +1229,7 @@ export class MatchEngine {
     ) {
       fuel.vx = 0;
       fuel.vy = 0;
-      this.awake.delete(fuel.id);
+      this.sleepFuel(fuel.id);
     }
   }
 
@@ -1137,52 +1280,64 @@ export class MatchEngine {
    * intake pulls it in from the front before the bumper ever touches it.
    */
   private pushFuelWithRobots(dt: number, frame: PhysicsFrame): void {
-    for (const fuel of this.state.fuel) {
-      if (fuel.state !== 'field' && fuel.state !== 'flight') continue;
+    const fuelBalls = this.state.fuel;
+    // Robots that can shove FUEL, gathered once per tick instead of a
+    // disabled/tipped/climbing test for every ball and robot pair.
+    const pushers = this.pusherRobots;
+    pushers.length = 0;
+    for (const robot of this.state.robots) {
+      if (robot.disabled || robot.tipped || robot.climb.active) continue;
+      pushers.push(robot);
+    }
+    for (let i = 0; i < fuelBalls.length; i++) {
+      const ball = fuelBalls[i];
+      if (ball.state !== 'field' && ball.state !== 'flight') continue;
       // Above the tallest bumper a ball sails over the robot untouched.
-      if (fuel.z > 0.9) continue;
-      for (const robot of this.state.robots) {
-        if (robot.disabled || robot.tipped || robot.climb.active) continue;
-        const dx = fuel.x - robot.x;
-        const dy = fuel.y - robot.y;
-        const distance = Math.hypot(dx, dy);
+      if (ball.z > 0.9) continue;
+      for (let p = 0; p < pushers.length; p++) {
+        const robot = pushers[p];
+        const dx = ball.x - robot.x;
+        const dy = ball.y - robot.y;
         const reach = robot.radius + BALL_RADIUS;
-        if (distance > reach + 0.6) continue;
-        const setup = this.setup.robots.find((r) => r.id === robot.id);
+        // Reject on squared distance: sleeping FUEL in the corral is usually
+        // metres away from every robot, and a square root is not free.
+        const nearby = reach + 0.6;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq > nearby * nearby) continue;
+        const distance = Math.sqrt(distanceSq);
+        const bot = this.botById.get(robot.id);
         const inFront = dx * Math.cos(robot.heading) + dy * Math.sin(robot.heading) > -0.1;
         if (
           robot.intakeActive &&
-          setup &&
+          bot &&
           distance > reach * 0.5 &&
           inFront &&
-          Math.hypot(fuel.vx, fuel.vy) < setup.bot.intake.speed * 1.8
+          Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) < bot.intake.speed * 1.8
         ) {
           const nx = -dx / (distance || 1);
           const ny = -dy / (distance || 1);
-          fuel.vx += nx * INTAKE_PULL * dt;
-          fuel.vy += ny * INTAKE_PULL * dt;
-          this.awake.add(fuel.id);
+          ball.vx += nx * INTAKE_PULL * dt;
+          ball.vy += ny * INTAKE_PULL * dt;
+          this.markAwake(ball.id);
         }
         if (distance > reach) continue;
         const nx = distance > 1e-6 ? dx / distance : 1;
         const ny = distance > 1e-6 ? dy / distance : 0;
         // Keep the ball outside the bumper instead of letting it sink in.
-        fuel.x = robot.x + nx * reach;
-        fuel.y = robot.y + ny * reach;
-        const relative = (fuel.vx - robot.vx) * nx + (fuel.vy - robot.vy) * ny;
+        ball.x = robot.x + nx * reach;
+        ball.y = robot.y + ny * reach;
+        const relative = (ball.vx - robot.vx) * nx + (ball.vy - robot.vy) * ny;
         if (relative < 0) {
           const impact = -relative;
-          const shooter = fuel.shotBy
-            ? this.state.robots.find((r) => r.id === fuel.shotBy)
-            : undefined;
+          const shooter = ball.shotBy ? this.robotById.get(ball.shotBy) : undefined;
           if (shooter && shooter.alliance !== robot.alliance && impact > 4) {
             frame.projectileHits.push({ robotId: robot.id, shooterId: shooter.id, speed: impact });
           }
-          fuel.vx -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * nx;
-          fuel.vy -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * ny;
-          if (impact > 0.6) fuel.vz = Math.max(fuel.vz, Math.min(1.3, impact * 0.16));
+          ball.vx -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * nx;
+          ball.vy -= (1 + ROBOT_BUMPER_RESTITUTION) * relative * ny;
+          if (impact > 0.6) ball.vz = Math.max(ball.vz, Math.min(1.3, impact * 0.16));
         }
-        this.awake.add(fuel.id);
+        this.markAwake(ball.id);
         break;
       }
     }
@@ -1221,7 +1376,7 @@ export class MatchEngine {
         frame.ejections.push({ robotId: fuel.shotBy, fuelId: fuel.id, fuelX: fuel.x, fuelY: fuel.y });
       }
       fuel.state = 'inactive';
-      this.awake.delete(fuel.id);
+      this.sleepFuel(fuel.id);
     }
   }
 
@@ -1271,29 +1426,46 @@ export class MatchEngine {
   /**
    * Ball-to-ball contacts, using a uniform grid so 500+ loose balls cost a few
    * thousand checks a tick instead of a quarter of a million.
-   */
-  private resolveFuelContacts(): void {
-    const cell = 2 * BALL_RADIUS + 0.02;
-    const cells = new Map<number, number[]>();
+   */  private resolveFuelContacts(): void {
     const fuel = this.state.fuel;
+    const grid = this.fuelGrid;
+    const cols = this.fuelGridCols;
+    const rows = this.fuelGridRows;
+    const keys = this.fuelCellKeys;
+    // Reuse last tick's buckets: clearing a length keeps the array capacity,
+    // so a 600-ball field stops allocating a fresh grid every tick.
+    for (let i = 0; i < keys.length; i++) (grid[keys[i]] as number[]).length = 0;
+    keys.length = 0;
     for (let i = 0; i < fuel.length; i++) {
       const ball = fuel[i];
       if (ball.state !== 'field' && ball.state !== 'flight') continue;
-      const key = (Math.floor(ball.x / cell) + 512) * 4096 + (Math.floor(ball.y / cell) + 512);
-      const bucket = cells.get(key);
-      if (bucket) bucket.push(i);
-      else cells.set(key, [i]);
+      const cx = Math.floor(ball.x / FUEL_GRID_CELL) + FUEL_GRID_BIAS;
+      const cy = Math.floor(ball.y / FUEL_GRID_CELL) + FUEL_GRID_BIAS;
+      if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
+      const key = cy * cols + cx;
+      const bucket = grid[key];
+      if (bucket) {
+        if (bucket.length === 0) keys.push(key);
+        bucket.push(i);
+      } else {
+        grid[key] = [i];
+        keys.push(key);
+      }
     }
-    const offsets: Array<[number, number]> = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 1]];
-    for (const [key, bucket] of cells) {
-      if (bucket.length === 0) continue;
-      const ix = Math.floor(key / 4096) - 512;
-      const iy = (key % 4096) - 512;
-      for (const [ox, oy] of offsets) {
-        const other = cells.get((ix + ox + 512) * 4096 + (iy + oy + 512));
-        if (!other) continue;
+    for (let k = 0; k < keys.length; k++) {
+      const key = keys[k];
+      const bucket = grid[key] as number[];
+      const cx = key % cols;
+      const cy = (key - cx) / cols;
+      for (let o = 0; o < FUEL_CELL_OFFSET_X.length; o++) {
+        const nx = cx + FUEL_CELL_OFFSET_X[o];
+        const ny = cy + FUEL_CELL_OFFSET_Y[o];
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const other = grid[ny * cols + nx];
+        if (!other || other.length === 0) continue;
+        const sameCell = FUEL_CELL_OFFSET_X[o] === 0 && FUEL_CELL_OFFSET_Y[o] === 0;
         for (let a = 0; a < bucket.length; a++) {
-          const start = ox === 0 && oy === 0 ? a + 1 : 0;
+          const start = sameCell ? a + 1 : 0;
           for (let b = start; b < other.length; b++) {
             this.collideFuelPair(fuel[bucket[a]], fuel[other[b]]);
           }
@@ -1305,13 +1477,13 @@ export class MatchEngine {
   private collideFuelPair(a: FuelObject, b: FuelObject): void {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
-    const min = 2 * BALL_RADIUS;
+    const min = FUEL_MIN_DISTANCE;
     const d2 = dx * dx + dy * dy;
-    if (d2 >= min * min || d2 < 1e-9) return;
+    if (d2 >= FUEL_MIN_DISTANCE_SQ || d2 < 1e-9) return;
     // Stacked balls are not modelled, so only near-flat contacts count.
-    if (Math.abs(a.z - b.z) > 1.4 * BALL_RADIUS) return;
-    const aAwake = this.awake.has(a.id);
-    const bAwake = this.awake.has(b.id);
+    if (Math.abs(a.z - b.z) > FUEL_CONTACT_Z_TOLERANCE) return;
+    const aAwake = this.isAwake(a.id);
+    const bAwake = this.isAwake(b.id);
     if (!aAwake && !bAwake) return;
     const distance = Math.sqrt(d2);
     const nx = dx / distance;
@@ -1341,14 +1513,14 @@ export class MatchEngine {
       b.vx += jt * tx;
       b.vy += jt * ty;
       if (Math.abs(relative) > 0.035) {
-        this.awake.add(a.id);
-        this.awake.add(b.id);
+      this.markAwake(a.id);
+      this.markAwake(b.id);
       }
     }
   }
 
   private handleHubDescent(fuel: FuelObject): void {
-    const shooter = fuel.shotBy ? this.state.robots.find((r) => r.id === fuel.shotBy) : undefined;
+    const shooter = fuel.shotBy ? this.robotById.get(fuel.shotBy) : undefined;
     for (const hub of this.field.hubs) {
       const dx = fuel.x - hub.x;
       const dy = fuel.y - hub.y;
@@ -1359,13 +1531,20 @@ export class MatchEngine {
         this.ejectFromHub(fuel, hub.alliance, false);
         return;
       }
+      if (shooter && fuel.launchedInZone === false) {
+        // G407: launched from outside the ALLIANCE ZONE. The ball reaches the
+        // HUB but does not score, so it is spat back out and the launch logged.
+        this.ejectFromHub(fuel, hub.alliance, false);
+        this.warnZoneShot(shooter);
+        return;
+      }
       const alliance = hub.alliance;
       if (this.state.hubActive[alliance]) {
         fuel.state = 'scored';
         fuel.vx = 0;
         fuel.vy = 0;
         fuel.vz = 0;
-        this.awake.delete(fuel.id);
+        this.sleepFuel(fuel.id);
         this.state.scores[alliance][this.state.phase === 'auto' ? 'autoFuel' : 'teleopFuel'] += 1;
         if (shooter) shooter.fuelScored += 1;
         this.addScoreEvent(alliance, 'fuel', this.game.scoring.fuel, `FUEL scored in the active ${alliance.toUpperCase()} HUB`, shooter?.id);
@@ -1374,6 +1553,30 @@ export class MatchEngine {
       }
       return;
     }
+  }
+
+  /**
+   * G407 is a scoring rule rather than a contact foul: the shot simply does not
+   * count. Repeat launches are logged for the referee, throttled so a driver
+   * holding a bad position does not flood the event feed.
+   */
+  private warnZoneShot(robot: RobotState): void {
+    const last = this.zoneWarnedAt.get(robot.id) ?? -99;
+    if (this.state.time - last < 10) return;
+    this.zoneWarnedAt.set(robot.id, this.state.time);
+    this.createRuleEvent(
+      'G407',
+      robot.alliance,
+      {
+        robotId: robot.id,
+        severity: 'warning',
+        points: 0,
+        message: `${robot.teamName} #${robot.teamNumber} launched FUEL from outside its ALLIANCE ZONE. G407: FUEL only scores when the robot's BUMPERS are at least partially inside the ALLIANCE ZONE, so the shot does not count.`,
+        meta: { x: Number(robot.x.toFixed(2)) },
+      },
+      true,
+      'auto',
+    );
   }
 
   private ejectFromHub(fuel: FuelObject, alliance: Alliance, markReleased: boolean): void {
@@ -1390,7 +1593,7 @@ export class MatchEngine {
     fuel.shotBy = undefined;
     fuel.shotAt = undefined;
     // Ejected FUEL is live the moment it leaves the chute.
-    this.awake.add(fuel.id);
+    this.markAwake(fuel.id);
     if (markReleased) {
       fuel.releasedByHub = alliance;
       fuel.releasedAt = this.state.time;
@@ -1401,10 +1604,10 @@ export class MatchEngine {
   private tryPickup(fuel: FuelObject, frame: PhysicsFrame): void {
     for (const robot of this.state.robots) {
       if (!robot.intakeActive || robot.disabled || robot.tipped || robot.climb.active) continue;
-      const setup = this.setup.robots.find((r) => r.id === robot.id);
-      if (!setup) continue;
-      if (robot.carrying >= setup.bot.intake.capacity) continue;
-      const pickupRadius = robot.radius + 0.25 + setup.bot.intake.width * 0.18;
+      const bot = this.botById.get(robot.id);
+      if (!bot) continue;
+      if (robot.carrying >= bot.intake.capacity) continue;
+      const pickupRadius = robot.radius + 0.25 + bot.intake.width * 0.18;
       if (Math.hypot(robot.x - fuel.x, robot.y - fuel.y) > pickupRadius) continue;
       if (fuel.z > 0.75) continue;
       fuel.state = 'carried';
@@ -1412,7 +1615,7 @@ export class MatchEngine {
       fuel.vx = 0;
       fuel.vy = 0;
       fuel.vz = 0;
-      this.awake.delete(fuel.id);
+      this.sleepFuel(fuel.id);
       robot.carrying += 1;
       robot.lastPickupAt = this.state.time;
       frame.pickups.push({
@@ -1431,7 +1634,7 @@ export class MatchEngine {
 
   private updateClimb(dt: number): void {
     for (const robot of this.state.robots) {
-      const setup = this.setup.robots.find((r) => r.id === robot.id);
+      const setup = this.setupById.get(robot.id);
       if (!setup || !setup.bot.climber.enabled) continue;
       const input = this.inputFor(robot);
       const tower = getTower(this.field, robot.alliance);
@@ -1476,17 +1679,27 @@ export class MatchEngine {
         if (input?.feed) this.feedHuman(human);
       } else {
         human.reach = 0;
-        if (this.state.phase !== 'countdown' && this.state.phase !== 'post') {
-          const loose = this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length;
-          if (loose < this.startingFuel * 0.55 && human.feedCooldown <= 0 && human.storage >= 3) this.feedHuman(human);
+        // Count loose FUEL only when a feed is actually possible: the old
+        // unconditional filter allocated a 600-entry array every tick.
+        if (human.feedCooldown <= 0 && human.storage >= 3 && this.state.phase !== 'countdown' && this.state.phase !== 'post') {
+          if (this.looseFuelCount() < this.startingFuel * 0.55) this.feedHuman(human);
         }
       }
     }
   }
 
+  /** Loose FUEL (on the field or in flight) without allocating an array. */
+  private looseFuelCount(): number {
+    let count = 0;
+    for (const fuel of this.state.fuel) {
+      if (fuel.state === 'field' || fuel.state === 'flight') count++;
+    }
+    return count;
+  }
+
   private feedHuman(human: HumanPlayerState): void {
     if (human.feedCooldown > 0 || human.storage < 3) return;
-    if (this.state.fuel.filter((f) => f.state === 'field' || f.state === 'flight').length >= this.fuelCeiling) return;
+    if (this.looseFuelCount() >= this.fuelCeiling) return;
     human.storage -= 3;
     human.feedCooldown = 1.15;
     human.lastFeedAt = this.state.time;
@@ -1504,14 +1717,17 @@ export class MatchEngine {
         state: 'flight',
       };
       this.state.fuel.push(ball);
-      this.awake.add(ball.id);
+      this.markAwake(ball.id);
     }
   }
 
   // ------------------------------------------------------------- rule sink
 
   private ruleSink(): RuleSink {
-    return {
+    // The sink only closes over `this`, so one instance serves the whole match
+    // instead of a fresh object and five closures every tick.
+    if (this.sinkCache) return this.sinkCache;
+    this.sinkCache = {
       game: this.game,
       callConfirmed: (ruleId, offender, options) => this.createRuleEvent(ruleId, offender, options, true, 'auto'),
       callReview: (ruleId, offender, options) => this.createRuleEvent(ruleId, offender, options, false, 'auto'),
@@ -1531,6 +1747,7 @@ export class MatchEngine {
         }
       },
     };
+    return this.sinkCache;
   }
 
   private createRuleEvent(
@@ -2148,6 +2365,7 @@ export class MatchEngine {
         x: round(r.x, 3),
         y: round(r.y, 3),
         heading: round(r.heading, 3),
+        turretYaw: round(r.turretYaw, 3),
         vx: round(r.vx, 2),
         vy: round(r.vy, 2),
         carrying: r.carrying,
@@ -2165,29 +2383,37 @@ export class MatchEngine {
         lastInputSeq: r.lastInputSeq,
         awardLevel3: r.awardLevel3,
       })),
-      fuel: this.state.fuel
-        .filter((f) => f.state === 'field' || f.state === 'flight')
-        .map((f) => ({
-          id: f.id,
-          x: round(f.x, 2),
-          y: round(f.y, 2),
-          z: round(f.z, 2),
-          vx: round(f.vx, 2),
-          vy: round(f.vy, 2),
-          vz: round(f.vz, 2),
-          state: f.state,
-          releasedByHub: f.releasedByHub,
-          releasedAt: f.releasedAt ? round(f.releasedAt, 2) : undefined,
-          shotBy: f.shotBy,
-          shotAt: f.shotAt ? round(f.shotAt, 2) : undefined,
-        })),
+      fuel: this.looseFuelSnapshot(),
       humans: this.state.humans.map((h) => ({ ...h, reach: round(h.reach, 2), storage: round(h.storage, 1) })),
-      scores: clone(this.state.scores),
+      scores: { red: { ...this.state.scores.red }, blue: { ...this.state.scores.blue } },
       hubActive: { ...this.state.hubActive },
       recentEvents: this.state.events.slice(-10).map((e) => ({ ...e })),
       pendingEvents: pending.map((e) => ({ ...e })),
       results: this.state.results ? clone(this.state.results) : undefined,
     };
+  }
+
+  /** Loose FUEL in a single pass: filter-then-map allocates two arrays a snapshot. */
+  private looseFuelSnapshot(): MatchSnapshot['fuel'] {
+    const loose: MatchSnapshot['fuel'] = [];
+    for (const f of this.state.fuel) {
+      if (f.state !== 'field' && f.state !== 'flight') continue;
+      loose.push({
+        id: f.id,
+        x: round(f.x, 2),
+        y: round(f.y, 2),
+        z: round(f.z, 2),
+        vx: round(f.vx, 2),
+        vy: round(f.vy, 2),
+        vz: round(f.vz, 2),
+        state: f.state,
+        releasedByHub: f.releasedByHub,
+        releasedAt: f.releasedAt ? round(f.releasedAt, 2) : undefined,
+        shotBy: f.shotBy,
+        shotAt: f.shotAt ? round(f.shotAt, 2) : undefined,
+      });
+    }
+    return loose;
   }
 
   /** Export a portable match log for replay/analysis. */

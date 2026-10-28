@@ -38,10 +38,10 @@ const NEW_ROBOT: RobotConfig = {
   name: 'Untitled robot',
   teamNumber: 2026,
   drive: 'tank',
-  chassis: { length: 0.78, width: 0.6, height: 0.4, mass: 27 },
-  stats: { maxSpeed: 4.4, accel: 6, turnRate: 2.4, grip: 0.8 },
-  intake: { enabled: true, width: 0.55, capacity: 48, speed: 1.8 },
-  shooter: { enabled: true, power: 8.5, accuracy: 0.9, range: 5.2, cooldown: 0.5 },
+  chassis: { length: 0.78, width: 0.6, height: 0.4, mass: 40 },
+  stats: { maxSpeed: 4.0, accel: 6.2, turnRate: 2.4, grip: 0.84 },
+  intake: { enabled: true, width: 0.55, capacity: 40, speed: 1.8 },
+  shooter: { enabled: true, power: 11, accuracy: 0.9, range: 5.2, cooldown: 0.5, turret: false, turretArc: 0, turretSlew: 0 },
   climber: { enabled: true, maxLevel: 1, strength: 1 },
   arm: { enabled: false, style: 'arm', reach: 0 },
   sensors: { fuelDetector: true, wallProximity: true, autoAlign: false, colorSensor: false },
@@ -588,8 +588,8 @@ export function BuilderPage() {
                   <input
                     type="number"
                     step={1}
-                    min={15}
-                    max={100}
+                    min={18}
+                    max={61}
                     value={config.chassis.mass}
                     onChange={(event) => patch((draft) => { draft.chassis.mass = Number(event.target.value); })}
                   />
@@ -616,7 +616,7 @@ export function BuilderPage() {
             <details className="tune-section" open>
               <summary>Intake &amp; launcher</summary>
               {config.intake.enabled ? (
-                range('Hopper capacity', config.intake.capacity, 40, 60, 1, ' FUEL', (value) =>
+                range('Hopper capacity', config.intake.capacity, 12, 60, 1, ' FUEL', (value) =>
                   patch((draft) => { draft.intake.capacity = value; }),
                 )
               ) : (
@@ -632,6 +632,23 @@ export function BuilderPage() {
                   )}
                   {range('Shot cooldown', config.shooter.cooldown, 0.15, 2.5, 0.05, ' s', (value) =>
                     patch((draft) => { draft.shooter.cooldown = value; }),
+                  )}
+                  {config.shooter.turretArc > 0 ? (
+                    <>
+                      <p className="tune-empty">
+                        {config.shooter.turret
+                          ? 'Powered azimuth axis: the launcher follows the HUB inside this arc.'
+                          : 'Fixed launcher: the whole robot has to face the HUB to score.'}
+                      </p>
+                      {range('Auto-aim arc', (config.shooter.turretArc * 180) / Math.PI, 10, 90, 5, '° each side', (value) =>
+                        patch((draft) => { draft.shooter.turretArc = (value * Math.PI) / 180; }),
+                      )}
+                      {range('Auto-aim slew', config.shooter.turretSlew, 0.5, 6, 0.1, ' rad/s', (value) =>
+                        patch((draft) => { draft.shooter.turretSlew = value; }),
+                      )}
+                    </>
+                  ) : (
+                    <p className="tune-empty">Fixed launcher: no azimuth travel, so the chassis has to aim.</p>
                   )}
                 </>
               ) : (

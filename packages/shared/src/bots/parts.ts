@@ -19,36 +19,36 @@ export const PART_CATALOG: PartDefinition[] = [
     name: 'Compact frame',
     slot: 'chassis',
     cost: 8,
-    mass: 15,
-    description: 'Short wheelbase, quick to turn, less space for fuel.',
-    stats: '25.6" × 24" × 12.6" · 15 kg base',
+    mass: 8,
+    description: 'Short wheelbase, quick to turn, and the lightest frame on the rack.',
+    stats: '25.6" × 24" × 12.6" · 8 kg frame',
   },
   {
     id: 'chassis-standard',
     name: 'Standard frame',
     slot: 'chassis',
     cost: 10,
-    mass: 20,
-    description: 'The balanced kit-bot frame. Fits a wide intake and a flywheel.',
-    stats: '27" × 27" × 16.5" · 20 kg base',
+    mass: 10,
+    description: 'The balanced 27 in square frame. Fits a wide intake and a flywheel.',
+    stats: '27" × 27" × 16.5" · 10 kg frame',
   },
   {
     id: 'chassis-heavy',
     name: 'Heavy frame',
     slot: 'chassis',
     cost: 14,
-    mass: 30,
+    mass: 13,
     description: 'Heavy rail frame. Hard to push, slower to change direction.',
-    stats: '28.1" × 26.6" × 18.1" · 30 kg base',
+    stats: '28.1" × 26.6" × 18.1" · 13 kg frame',
   },
   {
     id: 'chassis-low',
     name: 'Low-profile frame',
     slot: 'chassis',
     cost: 9,
-    mass: 17,
-    description: 'Low CG, easy to fit under the HUB rim. No tall mechanisms.',
-    stats: '27.6" × 26" × 10.2" · 17 kg base',
+    mass: 9,
+    description: 'Low CG and the shortest profile here, so it keeps the TRENCH lane open.',
+    stats: '27.6" × 26" × 10.2" · 9 kg frame',
   },
   { id: 'drive-none', name: 'No drivetrain', slot: 'drive', cost: 0, mass: 0, description: 'For a static test rig.', stats: '0 m/s' },
   {
@@ -57,8 +57,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'drive',
     cost: 10,
     mass: 7,
-    description: 'Simple, strong pushing power with a wide turning circle.',
-    stats: '4.4 m/s · 6 m/s² · 2.4 rad/s',
+    description: 'Simple, strong pushing power and the most traction over the BUMPs.',
+    stats: '4.0 m/s · 6.2 m/s² · 2.4 rad/s',
   },
   {
     id: 'drive-mecanum',
@@ -67,7 +67,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 16,
     mass: 9,
     description: 'Strafe around defenders. A little less traction on carpet.',
-    stats: '4.9 m/s · 7.4 m/s² · 3.0 rad/s',
+    stats: '4.3 m/s · 7.2 m/s² · 3.0 rad/s',
   },
   {
     id: 'drive-swerve',
@@ -76,7 +76,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 22,
     mass: 11,
     description: 'Fastest and most agile. Heavy and expensive on the budget.',
-    stats: '5.3 m/s · 8.4 m/s² · 3.6 rad/s',
+    stats: '4.6 m/s · 8.4 m/s² · 3.6 rad/s',
   },
   { id: 'intake-none', name: 'No intake', slot: 'intake', cost: 0, mass: 0, description: 'Cannot pick up FUEL.', stats: '0 FUEL' },
   {
@@ -85,8 +85,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'intake',
     cost: 8,
     mass: 4,
-    description: 'A compact roller for scooping loose FUEL.',
-    stats: '40 FUEL · 0.55 m wide',
+    description: 'A compact roller and a 24-ball hopper for scooping loose FUEL.',
+    stats: '24 FUEL · 0.55 m wide',
   },
   {
     id: 'intake-wide',
@@ -94,8 +94,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'intake',
     cost: 13,
     mass: 6,
-    description: 'Wide pickup mouth, ideal for the midfield fuel pile.',
-    stats: '48 FUEL · 0.72 m wide',
+    description: 'Full-width mouth over the bumpers and a 40-ball hopper.',
+    stats: '40 FUEL · 0.72 m wide',
   },
   {
     id: 'intake-vacuum',
@@ -103,7 +103,7 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'intake',
     cost: 18,
     mass: 8,
-    description: 'Big capacity and long reach. Demands a strong drivetrain.',
+    description: 'Expandable 60-ball hopper with long reach. Demands a strong drivetrain.',
     stats: '60 FUEL · 0.68 m wide',
   },
   { id: 'shooter-none', name: 'No launcher', slot: 'shooter', cost: 0, mass: 0, description: 'Drive FUEL to the HUB by hand? Not in this game.', stats: '—' },
@@ -113,8 +113,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'shooter',
     cost: 10,
     mass: 4,
-    description: 'Reliable short-range launcher for a rookie bot.',
-    stats: '82% accuracy · 3.8 m range',
+    description: 'Reliable single-drum launcher for a rookie bot.',
+    stats: '82% accuracy · 3.8 m range · 9 m/s',
   },
   {
     id: 'shooter-flywheel',
@@ -122,8 +122,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'shooter',
     cost: 18,
     mass: 7,
-    description: 'The standard midfield scorer. Good arc, moderate recovery.',
-    stats: '90% accuracy · 5.2 m range',
+    description: 'The standard midfield scorer. Its powered gimbal keeps the HUB in the sights while you drive.',
+    stats: '90% accuracy · 5.2 m range · 11 m/s · ±35° auto-aim',
   },
   {
     id: 'shooter-turret',
@@ -131,8 +131,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'shooter',
     cost: 26,
     mass: 10,
-    description: 'Vision-guided turret with a tight cone and a flat, fast shot.',
-    stats: '96% accuracy · 6.4 m range',
+    description: 'Vision-guided turret that tracks the HUB across 150° of travel. Flat, fast shot.',
+    stats: '96% accuracy · 6.4 m range · 13 m/s · ±75° auto-aim',
   },
   { id: 'climber-none', name: 'No climber', slot: 'climber', cost: 0, mass: 0, description: 'Cannot climb the TOWER.', stats: 'Level 0' },
   {
@@ -241,10 +241,12 @@ export const DRIVE_SPECS: Record<
   Exclude<DriveType, never> | 'default',
   { maxSpeed: number; accel: number; turnRate: number; grip: number; drive: DriveType; mass: number }
 > = {
-  default: { maxSpeed: 4.4, accel: 6, turnRate: 2.4, grip: 0.8, drive: 'tank', mass: 7 },
-  tank: { maxSpeed: 4.4, accel: 6, turnRate: 2.4, grip: 0.8, drive: 'tank', mass: 7 },
-  mecanum: { maxSpeed: 4.9, accel: 7.4, turnRate: 3.0, grip: 0.72, drive: 'mecanum', mass: 9 },
-  swerve: { maxSpeed: 5.3, accel: 8.4, turnRate: 3.6, grip: 0.9, drive: 'swerve', mass: 11 },
+  // Competitive REBUILT drivetrains run roughly 10–15 ft/s (3.0–4.6 m/s), with
+  // the tank base trading top speed for traction and the swerve base fastest.
+  default: { maxSpeed: 4.0, accel: 6.2, turnRate: 2.4, grip: 0.84, drive: 'tank', mass: 7 },
+  tank: { maxSpeed: 4.0, accel: 6.2, turnRate: 2.4, grip: 0.84, drive: 'tank', mass: 7 },
+  mecanum: { maxSpeed: 4.3, accel: 7.2, turnRate: 3.0, grip: 0.7, drive: 'mecanum', mass: 9 },
+  swerve: { maxSpeed: 4.6, accel: 8.4, turnRate: 3.6, grip: 0.9, drive: 'swerve', mass: 11 },
 };
 
 export function partsOf(config: RobotConfig, slot: PartSlot): string[] {
@@ -276,10 +278,10 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
       // Every frame here fits R104's 110 in perimeter. The standard frame is
       // the 27 x 27 in square that both 254 and 1678 ran in 2026.
       const dims: Record<string, [number, number, number, number]> = {
-        'chassis-compact': [0.65, 0.61, 0.32, 15],
-        'chassis-standard': [0.686, 0.686, 0.42, 20],
-        'chassis-heavy': [0.715, 0.675, 0.46, 30],
-        'chassis-low': [0.7, 0.66, 0.26, 17],
+        'chassis-compact': [0.65, 0.61, 0.32, 8],
+        'chassis-standard': [0.686, 0.686, 0.42, 10],
+        'chassis-heavy': [0.715, 0.675, 0.46, 13],
+        'chassis-low': [0.7, 0.66, 0.26, 9],
       };
       const d = dims[partId];
       if (d) next.chassis = { length: d[0], width: d[1], height: d[2], mass: 0 };
@@ -297,21 +299,47 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
       next.intake = {
         enabled: !partId.endsWith('-none'),
         width: partId === 'intake-wide' ? 0.72 : partId === 'intake-vacuum' ? 0.68 : 0.55,
-        // There is no rule limit on stored FUEL, and big hoppers win matches:
-        // every intake here is a real dump-style hopper of at least 40 FUEL.
-        capacity: partId === 'intake-wide' ? 48 : partId === 'intake-vacuum' ? 60 : partId === 'intake-roller' ? 40 : 0,
+        // No rule caps stored FUEL. Real REBUILT hoppers run about 20 (modest)
+        // to 40 (competitive) with 60+ as a specialist build.
+        capacity: partId === 'intake-wide' ? 40 : partId === 'intake-vacuum' ? 60 : partId === 'intake-roller' ? 24 : 0,
         speed: partId === 'intake-vacuum' ? 2.7 : partId === 'intake-wide' ? 2.1 : 1.8,
       };
       break;
     case 'shooter': {
-      const specs: Record<string, [number, number, number, number]> = {
-        'shooter-compact': [0.72, 3.8, 0.7, 7],
-        'shooter-flywheel': [0.9, 5.2, 0.5, 8.5],
-        'shooter-turret': [0.96, 6.4, 0.36, 9.2],
+      // [accuracy, range m, cooldown s, muzzle speed m/s, auto-aim arc ° each
+      // side of centre, slew rad/s]. Reported 2026 flywheel speeds span roughly
+      // 9–23 m/s, so the tiers climb from a rookie single drum to a flat, fast
+      // turret shot. The azimuth axis climbs with them: a fixed mount, then a
+      // short-throw powered gimbal, then the vision turret's wide travel.
+      const specs: Record<string, [number, number, number, number, number, number]> = {
+        'shooter-compact': [0.72, 3.8, 0.7, 9, 0, 0],
+        'shooter-flywheel': [0.9, 5.2, 0.5, 11, 35, 2.2],
+        'shooter-turret': [0.96, 6.4, 0.36, 13, 75, 3.4],
       };
       const s = specs[partId];
-      if (s) next.shooter = { enabled: true, accuracy: s[0], range: s[1], cooldown: s[2], power: s[3] };
-      else next.shooter = { enabled: false, accuracy: 0, range: 0, cooldown: 1, power: 0 };
+      if (s) {
+        next.shooter = {
+          enabled: true,
+          accuracy: s[0],
+          range: s[1],
+          cooldown: s[2],
+          power: s[3],
+          turret: s[4] > 0,
+          turretArc: (s[4] * Math.PI) / 180,
+          turretSlew: s[5],
+        };
+      } else {
+        next.shooter = {
+          enabled: false,
+          accuracy: 0,
+          range: 0,
+          cooldown: 1,
+          power: 0,
+          turret: false,
+          turretArc: 0,
+          turretSlew: 0,
+        };
+      }
       break;
     }
     case 'climber': {

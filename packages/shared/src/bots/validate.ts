@@ -15,6 +15,13 @@ export interface ValidationResult {
 
 const SLOTS: PartSlot[] = ['chassis', 'drive', 'intake', 'shooter', 'climber', 'arm', 'sensor'];
 
+/** R103: robot weight limit without bumpers, 115.0 lb. */
+const R103_LIMIT_KG = 52.16;
+/** R408: weight limit with bumpers installed, 135.0 lb. */
+const R408_LIMIT_KG = 61.23;
+/** §5.6 TRENCH: clear height of the opening under each arm, 22.25 in. */
+const TRENCH_CLEARANCE_M = 0.5652;
+
 export function validateRobot(config: RobotConfig): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -37,8 +44,25 @@ export function validateRobot(config: RobotConfig): ValidationResult {
       `Starting height is ${config.chassis.height.toFixed(2)} m. R107 caps robots at 30 in (0.762 m) tall.`,
     );
   }
-  if (config.chassis.mass < 18 || config.chassis.mass > 85) {
-    errors.push('Fully-built mass must stay between 18 kg and 85 kg for a playable robot.');
+  if (config.chassis.height > TRENCH_CLEARANCE_M) {
+    warnings.push(
+      `Starting height is ${(config.chassis.height / 0.0254).toFixed(1)} in. The TRENCH opening is only 22.25 in (0.565 m) high, so this robot has to cross the BUMPs instead of taking the fast lane.`,
+    );
+  }
+  // R103 caps the robot at 115 lb (52.16 kg) without bumpers; R408 allows 135 lb
+  // (61.23 kg) once bumpers are on, so the number checked here is the R103 limit.
+  if (config.chassis.mass > R408_LIMIT_KG) {
+    errors.push(
+      `Mass is ${config.chassis.mass.toFixed(1)} kg (${(config.chassis.mass / 0.4536).toFixed(0)} lb). Even with bumpers R408 caps a robot at 135 lb (61.23 kg).`,
+    );
+  } else if (config.chassis.mass > R103_LIMIT_KG) {
+    errors.push(
+      `Mass is ${config.chassis.mass.toFixed(1)} kg (${(config.chassis.mass / 0.4536).toFixed(0)} lb). R103 caps the robot at 115 lb (52.16 kg) without bumpers; swap a mechanism for a lighter one.`,
+    );
+  } else if (config.chassis.mass < 20) {
+    warnings.push(
+      'Under 20 kg this robot is lighter than any competitive REBUILT build and will get pushed around.',
+    );
   }
   if (config.stats.maxSpeed < 1 || config.stats.maxSpeed > 6) {
     errors.push('Top speed must be between 1 and 6 m/s.');
@@ -65,7 +89,7 @@ export function validateRobot(config: RobotConfig): ValidationResult {
   }
   if (config.arm.enabled && config.arm.reach > DEFAULT_GAME.expansion.maxBeyondPerimeter) {
     warnings.push(
-      `The ${config.arm.style === 'elevator' ? 'elevator' : 'arm'} reaches ${config.arm.reach.toFixed(2)} m; deploying it past 0.305 m will draw G413.`,
+      `The ${config.arm.style === 'elevator' ? 'elevator' : 'arm'} reaches ${config.arm.reach.toFixed(2)} m. R105 caps extension at 12 in (0.305 m) and R106 allows only one side at a time, so deploying it past that draws G413.`,
     );
   }
   if (!config.intake.enabled) warnings.push('No intake: this robot cannot collect FUEL from the field.');
@@ -115,8 +139,9 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
   const parts = validParts.filter((p) => (seen.has(p.slot) ? false : (seen.add(p.slot), true)));
 
   const skin = r.skin ?? base.skin;
-  // A robot that can hold FUEL holds a real hopper load of it: the floor is 40,
-  // a 27 in frame with no expansion. No intake means no capacity at all.
+  // Real hoppers run from a modest 20 FUEL to 40 for a competitive build and
+  // 60+ for a specialist, and no rule caps stored FUEL. No intake means no
+  // capacity at all.
   const intakeEnabled = bool(r.intake?.enabled, base.intake.enabled);
   const config: RobotConfig = {
     id: str(r.id, fallbackId, 64),
@@ -127,10 +152,10 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
       length: num(r.chassis?.length, base.chassis.length, 0.5, 1.4),
       width: num(r.chassis?.width, base.chassis.width, 0.5, 1.3),
       height: num(r.chassis?.height, base.chassis.height, 0.18, 0.9),
-      mass: num(r.chassis?.mass, base.chassis.mass, 15, 100),
+      mass: num(r.chassis?.mass, base.chassis.mass, 18, R408_LIMIT_KG),
     },
     stats: {
-      maxSpeed: num(r.stats?.maxSpeed, base.stats.maxSpeed, 0.5, 7),
+      maxSpeed: num(r.stats?.maxSpeed, base.stats.maxSpeed, 0.5, 6),
       accel: num(r.stats?.accel, base.stats.accel, 0.5, 20),
       turnRate: num(r.stats?.turnRate, base.stats.turnRate, 0.4, 8),
       grip: num(r.stats?.grip, base.stats.grip, 0, 1),
@@ -138,7 +163,7 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
     intake: {
       enabled: intakeEnabled,
       width: num(r.intake?.width, base.intake.width, 0.2, 1.2),
-      capacity: intakeEnabled ? Math.round(num(r.intake?.capacity, base.intake.capacity, 40, 60)) : 0,
+      capacity: intakeEnabled ? Math.round(num(r.intake?.capacity, base.intake.capacity, 12, 60)) : 0,
       speed: num(r.intake?.speed, base.intake.speed, 0, 5),
     },
     shooter: {
@@ -147,6 +172,9 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
       accuracy: num(r.shooter?.accuracy, base.shooter.accuracy, 0, 1),
       range: num(r.shooter?.range, base.shooter.range, 0, 10),
       cooldown: num(r.shooter?.cooldown, base.shooter.cooldown, 0.1, 3),
+      turret: bool(r.shooter?.turret, base.shooter.turret),
+      turretArc: num(r.shooter?.turretArc, base.shooter.turretArc, 0, Math.PI * 0.75),
+      turretSlew: num(r.shooter?.turretSlew, base.shooter.turretSlew, 0, 8),
     },
     climber: {
       enabled: bool(r.climber?.enabled, base.climber.enabled),

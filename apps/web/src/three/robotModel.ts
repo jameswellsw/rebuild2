@@ -482,18 +482,26 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
   // the robot has FUEL, so the launcher reads as live machinery.
   const shooterGroup = new THREE.Group();
   attitude.add(shooterGroup);
+  // Everything downstream of the azimuth bearing goes in here, so a launcher
+  // that can move shows the yaw the sim is solving shots with.
+  const turretGroup = new THREE.Group();
   let drum: THREE.Mesh | null = null;
   if (config.shooter.enabled) {
+    shooterGroup.add(turretGroup);
     // Drum over the front of the hopper, firing forward over the intake, with
     // a pedestal down to the hopper rail so it is mounted rather than floating.
     shooterGroup.position.set(0.14, hopperTop + 0.05, 0);
     shooterGroup.rotation.z = 0.26;
     box(machineAlu, 0.18, 0.05, frameW * 0.5, -0.08, -0.055, 0, shooterGroup);
+    // The azimuth bearing stays with the chassis, so the mount reads as a
+    // turntable instead of turning with the drum. A fixed launcher gets a small
+    // pedestal cap; a moving one gets a proper bearing plate.
+    cylinder(machineAlu, config.shooter.turretArc > 0 ? 0.085 : 0.06, 0.014, 0, -0.028, 0, shooterGroup, 20);
     // Side plates rather than a solid tray: a shooter is a frame with a drum in
     // it, and a full-width plate would hide the hopper under it.
     for (const sz of [-1, 1]) {
-      box(aluminium, 0.26, 0.12, 0.012, 0, 0.01, sz * frameW * 0.35, shooterGroup);
-      box(dark, 0.24, 0.03, 0.03, 0, -0.055, sz * frameW * 0.34, shooterGroup);
+      box(aluminium, 0.26, 0.12, 0.012, 0, 0.01, sz * frameW * 0.35, turretGroup);
+      box(dark, 0.24, 0.03, 0.03, 0, -0.055, sz * frameW * 0.34, turretGroup);
     }
     drum = new THREE.Mesh(
       geo(new THREE.CylinderGeometry(0.072, 0.072, frameW * 0.6, 18)),
@@ -502,7 +510,7 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
     drum.rotation.x = Math.PI / 2;
     drum.position.set(0.01, 0.045, 0);
     drum.castShadow = true;
-    shooterGroup.add(drum);
+    turretGroup.add(drum);
     // Hood over the top of the drum, open at the muzzle.
     const hood = new THREE.Mesh(
       geo(new THREE.CylinderGeometry(0.086, 0.086, frameW * 0.62, 18, 1, true, Math.PI * 0.15, Math.PI * 0.7)),
@@ -510,33 +518,33 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
     );
     hood.rotation.x = Math.PI / 2;
     hood.position.set(0.005, 0.05, 0);
-    shooterGroup.add(hood);
+    turretGroup.add(hood);
     for (const sz of [-1, 1]) {
-      const disc = cylinder(machineAlu, 0.055, 0.008, 0.01, 0.045, sz * frameW * 0.31, shooterGroup, 16);
+      const disc = cylinder(machineAlu, 0.055, 0.008, 0.01, 0.045, sz * frameW * 0.31, turretGroup, 16);
       disc.rotation.x = Math.PI / 2;
     }
     // Feed rollers between hopper and drum.
     for (const dx of [-0.1, -0.02]) {
-      const feed = cylinder(rubber, 0.028, frameW * 0.5, dx, -0.035, 0, shooterGroup, 12);
+      const feed = cylinder(rubber, 0.028, frameW * 0.5, dx, -0.035, 0, turretGroup, 12);
       feed.rotation.x = Math.PI / 2;
     }
     // Muzzle lip on the hood, not a free-floating ring.
     for (const sz of [-1, 1]) {
-      box(accentMat, 0.02, 0.06, 0.02, 0.13, 0.03, sz * frameW * 0.35, shooterGroup);
+      box(accentMat, 0.02, 0.06, 0.02, 0.13, 0.03, sz * frameW * 0.35, turretGroup);
     }
     // Hood pivot and the adjustment screw teams tune shot angle with.
     for (const sz of [-1, 1]) {
-      box(machineAlu, 0.05, 0.05, 0.012, -0.1, 0.02, sz * frameW * 0.36, shooterGroup);
+      box(machineAlu, 0.05, 0.05, 0.012, -0.1, 0.02, sz * frameW * 0.36, turretGroup);
     }
-    strut(aluminium, -0.11, 0.02, frameW * 0.3, -0.13, 0.11, frameW * 0.24, 0.006, shooterGroup);
+    strut(aluminium, -0.11, 0.02, frameW * 0.3, -0.13, 0.11, frameW * 0.24, 0.006, turretGroup);
     // Limelight-style vision camera aimed downfield, with its lens lit.
-    box(dark, 0.06, 0.045, 0.1, 0.1, 0.12, frameW * 0.22, shooterGroup);
+    box(dark, 0.06, 0.045, 0.1, 0.1, 0.12, frameW * 0.22, turretGroup);
     const vision = new THREE.Mesh(
       geo(new THREE.SphereGeometry(0.014, 8, 6)),
       mat('#59e3ff', { emissive: '#147e94', emissiveIntensity: 1.4 }),
     );
     vision.position.set(0.132, 0.12, frameW * 0.22);
-    shooterGroup.add(vision);
+    turretGroup.add(vision);
   }
 
   // ------------------------------------------------------------------ climber
@@ -728,6 +736,9 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
       wheelAngle += (speed / wheelRadius) * dt;
       for (const wheel of wheels) wheel.rotation.y = wheelAngle;
       if (drum) drum.rotation.y += (state.carrying > 0 ? 26 : 6) * dt;
+      // Auto-aim azimuth straight from the sim: the launcher trails the HUB on
+      // its own and stops at the edge of its mechanical travel.
+      turretGroup.rotation.y = -state.turretYaw;
       if (intakeRoller) intakeRoller.rotation.y -= 9 * dt * (state.intakeActive ? 2.4 : 0.5);
 
       if (config.arm.enabled) {

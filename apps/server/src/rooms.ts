@@ -4,6 +4,7 @@ import {
   MatchEngine,
   PRESET_BOTS,
   REBUILT_FIELD,
+  getBuiltinField,
   cloneField,
   validateField,
   type Alliance,
@@ -122,7 +123,7 @@ export class RoomManager {
       const blueBot = PRESET_BOTS.find((b) => b.id === DEFAULT_BOT_IDS.blue[position]) ?? PRESET_BOTS[3];
       slots.push(newSlot(3 + position, 'blue', position, blueBot));
     }
-    const fieldExists = input.fieldId && (this.store.getField(input.fieldId) || input.fieldId === REBUILT_FIELD.id);
+    const fieldExists = Boolean(input.fieldId && (this.store.getField(input.fieldId) || getBuiltinField(input.fieldId)));
     const state: RoomState = {
       code,
       name: cleanName(input.name, `${input.playerName}'s scrim`),
@@ -448,7 +449,7 @@ export class RoomManager {
           room.state.settings.mode = s.mode;
           this.releaseInactiveSlots(room);
         }
-        if (typeof s.fieldId === 'string' && (this.store.getField(s.fieldId) || s.fieldId === REBUILT_FIELD.id)) {
+        if (typeof s.fieldId === 'string' && (this.store.getField(s.fieldId) || getBuiltinField(s.fieldId))) {
           room.state.settings.fieldId = s.fieldId;
         }
         if (typeof s.autoFillAI === 'boolean') room.state.settings.autoFillAI = s.autoFillAI;

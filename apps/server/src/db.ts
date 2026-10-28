@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BotRecord, FieldLayout, MatchHistoryEntry, MatchResults } from '@rebuilt/shared';
-import { PRESET_BOTS, REBUILT_FIELD, normalizeRobotConfig, validateField } from '@rebuilt/shared';
+import { BUILTIN_FIELDS, PRESET_BOTS, getBuiltinField, normalizeRobotConfig, validateField } from '@rebuilt/shared';
 
 export interface StoredUser {
   id: string;
@@ -209,11 +209,20 @@ export class Store {
       custom: true,
       ownerId: row.owner_id ? String(row.owner_id) : undefined,
     }));
-    return [{ id: REBUILT_FIELD.id, name: REBUILT_FIELD.name, layout: REBUILT_FIELD, custom: false }, ...custom];
+    return [
+      ...BUILTIN_FIELDS.map((field) => ({
+        id: field.id,
+        name: field.name,
+        layout: field,
+        custom: false,
+      })),
+      ...custom,
+    ];
   }
 
   getField(id: string): FieldLayout | undefined {
-    if (id === REBUILT_FIELD.id) return REBUILT_FIELD;
+    const builtin = getBuiltinField(id);
+    if (builtin) return builtin;
     const row = this.db.prepare('SELECT layout_json FROM fields WHERE id = ?').get(id) as
       | { layout_json: string }
       | undefined;
@@ -229,7 +238,8 @@ export class Store {
     if (input.playerName) this.upsertUser(input.ownerId, input.playerName);
     const errors = validateField(input.layout);
     if (errors.length) throw new Error(errors.join(' '));
-    const id = input.id && input.id !== REBUILT_FIELD.id ? input.id : `field-${crypto.randomUUID()}`;
+    const id =
+      input.id && !getBuiltinField(input.id) ? input.id : `field-${crypto.randomUUID()}`;
     const existing = this.db.prepare('SELECT owner_id FROM fields WHERE id = ?').get(id) as
       | { owner_id: string }
       | undefined;

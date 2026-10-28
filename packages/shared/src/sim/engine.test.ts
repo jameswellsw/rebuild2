@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { PRESET_BOTS } from '../bots/presets.js';
 import { validateRobot } from '../bots/validate.js';
-import { REBUILT_FIELD, getHub, getTower } from './field.js';
+import {
+  CHAMPIONSHIP_FIELD,
+  FUEL_NEUTRAL,
+  FUEL_NEUTRAL_CHAMPIONSHIP,
+  FUEL_PER_DEPOT,
+  REBUILT_FIELD,
+  getHub,
+  getTower,
+} from './field.js';
 import { MatchEngine } from './engine.js';
 import type { DriverInput, MatchSetup, RobotConfig } from '../types.js';
 
@@ -128,6 +136,40 @@ describe('REBUILT match simulation', () => {
     expect(engine.state.scores.red.autoFuel).toBe(0);
   });
 
+  it('auto-aims the launcher onto the HUB, but only as far as its arc reaches', () => {
+    const shoot = () => input({ actions: { ...input().actions, shoot: true } });
+    const hub = getHub(REBUILT_FIELD, 'red');
+    // 2.4 m out and 70° off the HUB from the chassis: inside the zone, in range,
+    // but only a launcher that can swing will ever face the opening from here.
+    const run = (arcDeg: number) => {
+      const setup = makeSetup();
+      setup.robots[0].bot.shooter = {
+        ...setup.robots[0].bot.shooter,
+        power: 11,
+        accuracy: 1,
+        turret: arcDeg > 0,
+        turretArc: (arcDeg * Math.PI) / 180,
+        turretSlew: 3.4,
+      };
+      const engine = makeEngine(setup);
+      const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+      red.x = hub.x - 2.4;
+      red.y = hub.y;
+      red.heading = 1.22;
+      red.carrying = 6;
+      engine.setInput('red-bot', shoot());
+      advance(engine, 1.2);
+      engine.setInput('red-bot', input());
+      advance(engine, 2);
+      return engine.state.scores.red.autoFuel;
+    };
+    // Fixed mount: the same shot that scores when squared up sails past.
+    expect(run(0)).toBe(0);
+    // 35° of travel cannot reach a HUB 70° off the nose; 75° can.
+    expect(run(35)).toBe(0);
+    expect(run(75)).toBeGreaterThan(0);
+  });
+
   it('shoves loose FUEL with its bumpers instead of driving through it', () => {
     const engine = makeEngine();
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
@@ -151,17 +193,19 @@ describe('REBUILT match simulation', () => {
     expect(moved.length).toBeGreaterThan(5);
   });
 
-  it('falls short when the HUB is past the flywheel range', () => {
+  it('falls short when the shot needs more than the flywheel is rated for', () => {
     const shoot = () => input({ actions: { ...input().actions, shoot: true } });
     const hub = getHub(REBUILT_FIELD, 'red');
-    const run = (distance: number) => {
+    const run = (power: number) => {
       const setup = makeSetup();
-      setup.robots[0].bot.shooter = { ...setup.robots[0].bot.shooter, power: 7, accuracy: 1 };
+      setup.robots[0].bot.shooter = { ...setup.robots[0].bot.shooter, power, accuracy: 1 };
       const engine = makeEngine(setup);
       const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
-      red.x = hub.x + distance;
+      // 3.4 m from the HUB and still inside the ALLIANCE ZONE, so it is the
+      // flywheel rating and not G407 that decides whether the ball arrives.
+      red.x = hub.x - 3.4;
       red.y = hub.y;
-      red.heading = Math.PI;
+      red.heading = 0;
       red.carrying = 6;
       engine.setInput('red-bot', shoot());
       advance(engine, 1);
@@ -169,18 +213,37 @@ describe('REBUILT match simulation', () => {
       advance(engine, 3);
       return engine.state.scores.red.autoFuel;
     };
-    // Same robot, same aim: 3 m is inside a 7 m/s flywheel's reach, 9 m is not.
-    expect(run(3)).toBeGreaterThan(0);
-    expect(run(9)).toBe(0);
+    // Same robot, same aim: an 8.5 m/s flywheel lifts the ball that far, and a
+    // 3 m/s one cannot.
+    expect(run(8.5)).toBeGreaterThan(0);
+    expect(run(3)).toBe(0);
   });
 
   it('lobs FUEL in from point-blank instead of hitting the HUB panel', () => {
     const engine = makeEngine();
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
     const hub = getHub(REBUILT_FIELD, 'red');
-    // 1.5 m from the HUB centre: the muzzle is barely a ball-width clear of the
-    // front panel, which is exactly where a flat shot used to smack the wall.
-    red.x = hub.x + 1.5;
+    // 1.5 m from the HUB centre on the alliance-wall side, which is both legal
+    // under G407 and barely a ball-width clear of the front panel: exactly
+    // where a flat shot used to smack the wall.
+    red.x = hub.x - 1.5;
+    red.y = hub.y;
+    red.heading = 0;
+    red.carrying = 6;
+    engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
+    advance(engine, 1);
+    engine.setInput('red-bot', input());
+    advance(engine, 2);
+    expect(engine.state.scores.red.autoFuel).toBeGreaterThan(0);
+  });
+
+  it('does not score FUEL launched from outside the ALLIANCE ZONE (G407)', () => {
+    const engine = makeEngine();
+    const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    // Squared up on the HUB and in range, but past its own ROBOT STARTING LINE:
+    // the bumpers are not in the ALLIANCE ZONE, so the shot cannot score.
+    red.x = hub.x + 2.2;
     red.y = hub.y;
     red.heading = Math.PI;
     red.carrying = 6;
@@ -188,7 +251,10 @@ describe('REBUILT match simulation', () => {
     advance(engine, 1);
     engine.setInput('red-bot', input());
     advance(engine, 2);
-    expect(engine.state.scores.red.autoFuel).toBeGreaterThan(0);
+    expect(engine.state.scores.red.autoFuel).toBe(0);
+    const event = engine.state.events.find((e) => e.ruleId === 'G407');
+    expect(event).toBeTruthy();
+    expect(event?.points).toBe(0);
   });
 
   it('sets the first inactive HUB from AUTO FUEL', () => {
@@ -319,6 +385,60 @@ describe('REBUILT match simulation', () => {
     expect(red.awardLevel3).toBe(true);
     engine.finishMatch();
     expect(engine.state.scores.red.tower).toBeGreaterThanOrEqual(30);
+  });
+
+  it('stages the manual’s 504 FUEL, and 600 on the Championship field', () => {
+    // 24 in each DEPOT plus the 360 corralled on the CENTER LINE. The OUTPOST
+    // chute FUEL is the human players' stock and preloads are carried, so
+    // neither is a loose ball on the field at kickoff.
+    const standard = makeEngine().state.fuel.length;
+    expect(standard).toBe(FUEL_PER_DEPOT * 2 + FUEL_NEUTRAL);
+    const championship = makeEngine(
+      makeSetup({ field: JSON.parse(JSON.stringify(CHAMPIONSHIP_FIELD)) }),
+    ).state.fuel.length;
+    expect(championship).toBe(FUEL_PER_DEPOT * 2 + FUEL_NEUTRAL_CHAMPIONSHIP);
+    // The extra 96 FUEL go into the NEUTRAL ZONE corral, not the DEPOTs.
+    expect(championship - standard).toBe(FUEL_NEUTRAL_CHAMPIONSHIP - FUEL_NEUTRAL);
+  });
+
+  it('keeps AI robots on their own side of the CENTER LINE during AUTO', () => {
+    const aiRobot = (alliance: 'red' | 'blue', index: number): MatchSetup['robots'][number] => {
+      const id = `${alliance}-${index}`;
+      const teamNumber = (alliance === 'red' ? 100 : 200) + index;
+      return {
+        id,
+        slot: alliance === 'red' ? index : 3 + index,
+        alliance,
+        index,
+        teamNumber,
+        teamName: `${alliance.toUpperCase()} ${index}`,
+        bot: cloneConfig(id, teamNumber, PRESET_BOTS[index % PRESET_BOTS.length].config),
+        controller: 'ai',
+      };
+    };
+    const engine = makeEngine(
+      makeSetup({ mode: '2v2', robots: [aiRobot('red', 0), aiRobot('red', 1), aiRobot('blue', 0), aiRobot('blue', 1)] }),
+    );
+    const center = engine.field.size.length / 2;
+    let redOverhang = 0;
+    let blueOverhang = 0;
+    while (engine.state.phase === 'auto') {
+      engine.step(1 / 60);
+      for (const robot of engine.state.robots) {
+        const overhang =
+          robot.alliance === 'red'
+            ? robot.x + robot.radius - center
+            : center - (robot.x - robot.radius);
+        if (robot.alliance === 'red') redOverhang = Math.max(redOverhang, overhang);
+        else blueOverhang = Math.max(blueOverhang, overhang);
+      }
+    }
+    // No bumper ever pokes completely across the CENTER LINE: G403 makes that
+    // an illegal position to engage from, so a legal AUTO routine stays home.
+    expect(redOverhang).toBeLessThanOrEqual(0);
+    expect(blueOverhang).toBeLessThanOrEqual(0);
+    // The routine still does its job: the AI shoots its preload in AUTO.
+    expect(engine.state.scores.red.autoFuel + engine.state.scores.blue.autoFuel).toBeGreaterThan(0);
   });
 
   it('produces a valid bot roster under construction limits', () => {

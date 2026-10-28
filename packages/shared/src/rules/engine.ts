@@ -74,6 +74,17 @@ function otherAlliance(a: Alliance): Alliance {
   return a === 'red' ? 'blue' : 'red';
 }
 
+/** Phases in which live-play rules are evaluated. */
+const LIVE_PHASES: ReadonlySet<string> = new Set([
+  'auto',
+  'transition',
+  'shift1',
+  'shift2',
+  'shift3',
+  'shift4',
+  'endgame',
+]);
+
 function severityPoints(severity: RuleSeverity, game: GameDefinition): number {
   if (severity === 'minor') return game.fouls.minor;
   if (severity === 'major') return game.fouls.major;
@@ -93,6 +104,8 @@ export class RuleEngine {
   private readonly expansionTime = new Map<string, number>();
   private readonly cooldowns = new Map<string, number>();
   private readonly humanReachTime = new Map<Alliance, number>();
+  /** Contact keys seen this tick; reused so the streak scan allocates nothing. */
+  private readonly seenContacts = new Set<string>();
   private lastTick = 0;
 
   reset(): void {
@@ -138,7 +151,8 @@ export class RuleEngine {
   }
 
   private updateContactStreaks(state: MatchState, frame: PhysicsFrame): void {
-    const seen = new Set<string>();
+    const seen = this.seenContacts;
+    seen.clear();
     for (const c of frame.contacts) {
       const a = this.robot(state, c.aId);
       const b = this.robot(state, c.bId);
@@ -162,7 +176,7 @@ export class RuleEngine {
   }
 
   private evaluatePins(state: MatchState, frame: PhysicsFrame, sink: RuleSink, dt: number): void {
-    const live = ['auto', 'transition', 'shift1', 'shift2', 'shift3', 'shift4', 'endgame'].includes(state.phase);
+    const live = LIVE_PHASES.has(state.phase);
     if (!live) return;
 
     // End pins where the pinner has itself become pinned.

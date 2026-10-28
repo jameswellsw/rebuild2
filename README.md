@@ -36,10 +36,11 @@ same room.
   BUMPs are 73 in × 44.4 in × 6.513 in with their ramps toward both zones, each TRENCH runs from
   a guardrail inboard to its BUMP, and the ALLIANCE ZONE is the manual's 158.6 in deep, ending at
   the alliance-coloured ROBOT STARTING LINE that emerges from under each HUB. FUEL is staged the
-  way §6.3.4 stages it at the Championship quantity: 600 per match, 24 in each DEPOT, 24 in
-  each human player's OUTPOST chute, up to 8 preloaded per robot, and the remaining 456
-  corralled into the manual's 206.0 in × 72.0 in bounding box on the CENTER LINE — two dense blocks either side of the
-  2.0 in divider, which is exactly what a real kickoff looks like. The BUMPs are physical
+  way §6.3.4 stages it: 504 per match, 24 in each DEPOT, 24 in each human player's OUTPOST
+  chute, up to 8 preloaded per robot, and the remaining 360 corralled into the manual's
+  206.0 in × 72.0 in bounding box on the CENTER LINE — two dense blocks either side of the
+  2.0 in divider, which is exactly what a real kickoff looks like. The Championship staging
+  (600 per match, 456 corralled) ships as a second field, REBUILT 2026 — Championship Field. The BUMPs are physical
   ramps too — a robot loses momentum climbing one and gets it back on the far side, and loose
   FUEL rolls off them.
 - **An arena, not a diorama** — the field sits inside a venue: 20 in clear polycarbonate guardrails
@@ -192,13 +193,16 @@ The same deterministic engine runs in the browser and on the room server at a fi
 
 - **Shooting.** Each shot picks the flattest hood (52°–84°) that both clears the HUB's 72 in
   front panel and drops through the opening, then spins the flywheel to the matching muzzle speed —
-  capped by the robot's rated `power`. Aim is the chassis heading, nothing aims for the driver, so
-  squaring up is the skill. Shots past the flywheel's reach fall short, and point-blank shots turn
-  into steep lobs.
+  capped by the robot's rated `power`. Aim is the muzzle heading: a fixed launcher throws wherever
+  the chassis points, so squaring up is the skill. A launcher on a powered azimuth axis auto-aims
+  instead — it slews onto the HUB at its rated rate inside its arc (±35° for the powered gimbal,
+  ±75° for the vision turret) and clamps at its stops when the HUB falls outside it, so a turreted
+  robot can score while the chassis is still rotating but cannot shoot behind itself. Shots past
+  the flywheel's reach fall short, and point-blank shots turn into steep lobs.
 - **FUEL.** Every loose ball is a 0.15 m, 0.21 kg body: ball-to-ball contacts on a spatial grid,
   bumper pushes, intake suction, gravity down the BUMP ramps, bounces off the 20 in guardrail and
   the HUB panels, and a support surface (carpet, ramp, HUB roof, TRENCH roof). Corral FUEL sleeps
-  until something disturbs it, which keeps a 600-ball kickoff stable and cheap.
+  until something disturbs it, which keeps a 504-ball kickoff stable and cheap.
 - **Robots.** Mass-based bumper collisions, traction-limited acceleration, ramp gravity, pinning and
   human-player reach all live in the same fixed-step loop.
 
@@ -213,12 +217,17 @@ Team Update can change numbers without touching the physics.
   win 3 RP, tie 1 RP. Fouls award match points only.
 - **Penalties:** minor foul +5, major foul +15; warnings are logged with no points. Two yellows
   become a red card; a red card disqualifies the alliance (0 match points, no RPs).
+- **Scoring zone (G407):** FUEL only scores when the robot launched it with its BUMPERS at least
+  partially inside its ALLIANCE ZONE. A shot from outside the zone is ejected from the HUB and
+  logged instead of counted.
 - **Pinning (G418):** 3.0s limit counted in 3s increments; reset requires 1.83 m of separation held
   for 3s.
 - **Expansion (G413):** 0.305 m beyond the frame, 0.762 m height limit, 2.794 m perimeter.
-- **Catalog:** G101, G211, G403, G404, G405, G408, G413, G415, G416, G417, G418, G419, G420, G421,
-  G423, G424, G425, G427, R105, R107. Each entry carries the penalty, detection mode (automatic,
-  review, referee-only) and a plain-language summary.
+- **Catalog:** G101, G211, G401–G414, G415–G427 and R105/R107 — the whole 2026 conduct and
+  construction list, each entry carrying its penalty, detection mode (automatic, review,
+  referee-only) and a plain-language summary. Not every rule is machine-detected; the ones that
+  are (G403, G405, G407, G408, G413, G418, G420 …) fire from physics, and the rest are available
+  as referee calls.
 
 The official REBUILT 2026 game manual and Team Updates always take precedence; the Rules page links
 to the source and states the implemented snapshot.

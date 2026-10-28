@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { REBUILT_FIELD, type FieldLayout } from '@rebuilt/shared';
+import { BUILTIN_FIELDS, type FieldLayout } from '@rebuilt/shared';
 import { api, ApiError } from './api';
 import { useProfile } from './profile';
 import { loadLocalFields, saveLocalField, type LocalField } from './storage';
@@ -38,7 +38,10 @@ export function useFields() {
 
   const fields = useMemo<FieldOption[]>(() => {
     const map = new Map<string, FieldOption>();
-    map.set(REBUILT_FIELD.id, { id: REBUILT_FIELD.id, name: REBUILT_FIELD.name, layout: REBUILT_FIELD, custom: false });
+    // The regulation carpet and the Championship staging both ship with the app.
+    for (const builtin of BUILTIN_FIELDS) {
+      map.set(builtin.id, { id: builtin.id, name: builtin.name, layout: builtin, custom: false });
+    }
     for (const field of serverFields) map.set(field.id, field);
     for (const field of localFields) map.set(field.id, field);
     return [...map.values()];
@@ -46,7 +49,7 @@ export function useFields() {
 
   const saveField = useCallback(
     async (input: { id?: string; name: string; layout: FieldLayout }): Promise<{ field: FieldOption; synced: boolean }> => {
-      const id = input.id && input.id !== REBUILT_FIELD.id ? input.id : `field-${crypto.randomUUID()}`;
+      const id = input.id && !BUILTIN_FIELDS.some((builtin) => builtin.id === input.id) ? input.id : `field-${crypto.randomUUID()}`;
       const layout: FieldLayout = {
         ...JSON.parse(JSON.stringify(input.layout)),
         id,

@@ -157,7 +157,7 @@ export function RulesPage() {
               <div className="timeline-bar" style={{ width: `${(REBUILT_2026.timing.transition / REBUILT_2026.timing.total) * 100}%` }} />
               <span className="timeline-time">0:20 – 0:30</span>
               <strong>TRANSITION</strong>
-              <p>10 seconds. No FUEL scoring. Both HUBs active as the shift schedule is announced.</p>
+              <p>10 seconds, both HUBs still active and scoring counts. The first inactive HUB is sent to the teams as TELEOP begins.</p>
             </div>
             <div className="timeline-block shift">
               <div className="timeline-bar" style={{ width: `${((REBUILT_2026.timing.shift * REBUILT_2026.timing.shifts) / REBUILT_2026.timing.total) * 100}%` }} />

@@ -49,6 +49,12 @@ export interface ShooterSpec {
   accuracy: number;
   range: number;
   cooldown: number;
+  /** Powered azimuth axis: the launcher tracks the HUB by itself. */
+  turret: boolean;
+  /** Azimuth travel each side of centre, radians. 0 is a fixed mount. */
+  turretArc: number;
+  /** Slew rate of the azimuth axis, radians per second. */
+  turretSlew: number;
 }
 
 export interface ClimberSpec {
@@ -311,6 +317,8 @@ export interface RobotState {
   x: number;
   y: number;
   heading: number;
+  /** Where the launcher's auto-aim has driven to, relative to the chassis (rad). */
+  turretYaw: number;
   vx: number;
   vy: number;
   radius: number;
@@ -355,6 +363,8 @@ export interface FuelObject {
   /** Robot that last launched this object (used for G404/G405). */
   shotBy?: string;
   shotAt?: number;
+  /** True when the launch happened with the robot's bumpers in its ALLIANCE ZONE (G407). */
+  launchedInZone?: boolean;
 }
 
 export interface HumanPlayerState {
@@ -512,6 +522,8 @@ export interface RobotSnapshot {
   x: number;
   y: number;
   heading: number;
+  /** Where the launcher's auto-aim has driven to, relative to the chassis (rad). */
+  turretYaw: number;
   vx: number;
   vy: number;
   carrying: number;

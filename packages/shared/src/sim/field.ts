@@ -45,6 +45,11 @@ const hubY = FIELD_WIDTH / 2;
 const STARTING_LINE = 158.6 * IN;
 /** §5.3 the HUMAN STARTING LINE's near edge is 24 in from the alliance wall. */
 const HUMAN_LINE = 24 * IN;
+/**
+ * §6: the ALLIANCE ZONE is the 158.6 in deep band behind each alliance's ROBOT
+ * STARTING LINE. G407 only allows a robot to score FUEL from inside it.
+ */
+export const ALLIANCE_ZONE_DEPTH = STARTING_LINE;
 /** NEUTRAL ZONE: 283 in deep, i.e. 184.1 in in from each wall. */
 export const NEUTRAL_ZONE_DEPTH = 283 * IN;
 
@@ -61,23 +66,27 @@ const CORRAL_DIVIDER = 2 * IN;
 const CORRAL_SIDE = (CORRAL_DEPTH - CORRAL_DIVIDER) / 2;
 
 /**
- * §6.3.4: 504 FUEL at a regional, and up to 600 at a District Championship or
- * FIRST Championship, where the extra FUEL joins the NEUTRAL ZONE corral. This
- * field is the 600-ball Championship setup: 24 per DEPOT, 24 per OUTPOST CHUTE,
- * up to 48 preloaded, and the remaining 456 corralled on the CENTER LINE.
+ * §6.3.4 stages 504 FUEL for a Regional or District match: 24 in each DEPOT, 24
+ * in each OUTPOST CHUTE, up to 8 preloaded in each ROBOT, and the balance —
+ * 360 — corralled in the NEUTRAL ZONE. A District Championship or FIRST
+ * Championship may stage up to 600 by topping that corral up, which is the
+ * CHAMPIONSHIP_FIELD variant below.
  */
-export const FUEL_PER_MATCH = 600;
+export const FUEL_PER_MATCH = 504;
 export const FUEL_PER_DEPOT = 24;
 export const FUEL_PER_CHUTE = 24;
-/** The rest is corralled in the NEUTRAL ZONE: 456 in the Championship setup. */
-export const FUEL_NEUTRAL = 456;
+/** Corralled in the NEUTRAL ZONE: 360 of the 504 a standard match stages. */
+export const FUEL_NEUTRAL = 360;
+/** The Championship quantity: 600 staged, 456 of them corralled. */
+export const FUEL_PER_MATCH_CHAMPIONSHIP = 600;
+export const FUEL_NEUTRAL_CHAMPIONSHIP = 456;
 const CORRAL_COUNT = FUEL_NEUTRAL / 2;
 
 export const REBUILT_FIELD: FieldLayout = {
   id: 'rebuilt-2026-official',
-  name: 'REBUILT 2026 — Championship Field',
+  name: 'REBUILT 2026 — Regulation Field',
   season: 2026,
-  version: 4,
+  version: 5,
   // The 2026 field is enclosed by 20 in (0.508 m) polycarbonate guardrails.
   size: { length: FIELD_LENGTH, width: FIELD_WIDTH, wallHeight: 0.508 },
   grid: 0.25,
@@ -117,9 +126,9 @@ export const REBUILT_FIELD: FieldLayout = {
     { id: 'red-depot', alliance: 'red', x: DEPOT_DEPTH / 2 + 0.08, y: 6.28, rotation: 0, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
     { id: 'blue-depot', alliance: 'blue', x: FIELD_LENGTH - DEPOT_DEPTH / 2 - 0.08, y: FIELD_WIDTH - 6.28, rotation: Math.PI, width: DEPOT_WIDTH, depth: DEPOT_DEPTH },
   ],
-  // §6.3.4 staging at the Championship quantity: 600 FUEL. 24 sit in each
-  // DEPOT (not in a uniform layout), 24 belong to each human player in the
-  // OUTPOST CHUTE, up to 48 are preloaded in ROBOTS, and the remaining 456 are
+  // §6.3.4 staging at the standard 504 FUEL. 24 sit in each DEPOT (not in a
+  // uniform layout), 24 belong to each human player in the OUTPOST CHUTE, up to
+  // 48 are preloaded in ROBOTS, and the remaining 360 are
   // corralled on the CENTER LINE inside the manual's 206.0 x 72.0 in bounding
   // box. The two corral spawns butt against the 2.0 in divider so the kickoff
   // field reads as one block split down the middle, exactly like Figure 6-3.
@@ -165,6 +174,31 @@ export const REBUILT_FIELD: FieldLayout = {
     ],
   },
 };
+
+/**
+ * The District Championship / FIRST Championship variant: the same carpet and
+ * elements with the NEUTRAL ZONE corral topped up so the match stages the
+ * maximum 600 FUEL (§6.3.4).
+ */
+export const CHAMPIONSHIP_FIELD: FieldLayout = (() => {
+  const field = cloneField(REBUILT_FIELD);
+  field.id = 'rebuilt-2026-championship';
+  field.name = 'REBUILT 2026 — Championship Field';
+  const extraPerCorral = (FUEL_NEUTRAL_CHAMPIONSHIP - FUEL_NEUTRAL) / 2;
+  for (const spawn of field.fuelSpawns) {
+    // Only the two NEUTRAL ZONE corrals are topped up; DEPOT heaps are fixed at 24.
+    if (spawn.width === undefined || spawn.depth === undefined) continue;
+    spawn.count += extraPerCorral;
+  }
+  return field;
+})();
+
+/** Every field the sim ships with, in picker order. */
+export const BUILTIN_FIELDS: FieldLayout[] = [REBUILT_FIELD, CHAMPIONSHIP_FIELD];
+
+export function getBuiltinField(id: string): FieldLayout | undefined {
+  return BUILTIN_FIELDS.find((field) => field.id === id);
+}
 
 export function cloneField(field: FieldLayout): FieldLayout {
   return JSON.parse(JSON.stringify(field)) as FieldLayout;
@@ -212,6 +246,17 @@ export function outpostFeedPoint(field: FieldLayout, alliance: Alliance): Vec2 {
 
 export function isInOwnHalf(field: FieldLayout, alliance: Alliance, x: number) {
   return alliance === 'red' ? x <= field.size.length / 2 : x >= field.size.length / 2;
+}
+
+/**
+ * G407: a ROBOT may only launch FUEL into its HUB with its BUMPERS partially or
+ * fully inside its ALLIANCE ZONE. A robot is modelled as a circle, so any bumper
+ * overlap counts.
+ */
+export function inAllianceZone(field: FieldLayout, alliance: Alliance, x: number, radius: number): boolean {
+  return alliance === 'red'
+    ? x - radius <= ALLIANCE_ZONE_DEPTH
+    : x + radius >= field.size.length - ALLIANCE_ZONE_DEPTH;
 }
 
 /** True when a robot's center is far enough across the center line to count as bumpers-across. */
