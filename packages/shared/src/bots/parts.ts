@@ -113,8 +113,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'shooter',
     cost: 10,
     mass: 4,
-    description: 'Reliable single-drum launcher for a rookie bot.',
-    stats: '82% accuracy · 3.8 m range · 9 m/s',
+    description: 'Reliable single-drum launcher for a rookie bot. A heavy drum, so it sags under a burst.',
+    stats: '72% accuracy · 3.8 m range · 9 m/s · 0.95 s recovery',
   },
   {
     id: 'shooter-flywheel',
@@ -123,7 +123,7 @@ export const PART_CATALOG: PartDefinition[] = [
     cost: 18,
     mass: 7,
     description: 'The standard midfield scorer. Its powered gimbal keeps the HUB in the sights while you drive.',
-    stats: '90% accuracy · 5.2 m range · 11 m/s · ±35° auto-aim',
+    stats: '90% accuracy · 5.2 m range · 11 m/s · ±45° auto-aim · 0.72 s recovery',
   },
   {
     id: 'shooter-turret',
@@ -131,8 +131,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'shooter',
     cost: 26,
     mass: 10,
-    description: 'Vision-guided turret that tracks the HUB across 150° of travel. Flat, fast shot.',
-    stats: '96% accuracy · 6.4 m range · 13 m/s · ±75° auto-aim',
+    description: 'AprilTag turret that tracks the HUB across 340° of travel. Flat, fast shot.',
+    stats: '96% accuracy · 6.4 m range · 13 m/s · ±170° auto-aim · 0.55 s recovery',
   },
   { id: 'climber-none', name: 'No climber', slot: 'climber', cost: 0, mass: 0, description: 'Cannot climb the TOWER.', stats: 'Level 0' },
   {
@@ -205,8 +205,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'sensor',
     cost: 9,
     mass: 2,
-    description: 'Color tracking, auto-align and HUB targeting.',
-    stats: 'Fuel · Align · Color',
+    description: 'AprilTag camera and color sensor. The only sensor that can range the HUB and cancel your travel at launch.',
+    stats: 'Fuel · 82° camera · 9 m · 45 ms',
   },
   {
     id: 'sensor-lidar',
@@ -214,8 +214,8 @@ export const PART_CATALOG: PartDefinition[] = [
     slot: 'sensor',
     cost: 8,
     mass: 2,
-    description: 'Wall proximity and autonomous path planning.',
-    stats: 'Bump · Align',
+    description: 'Wall proximity and odometry. It can steer onto the HUB from its own pose, but it has no lens to range a tag.',
+    stats: 'Bump · Odometry aim',
   },
 ];
 
@@ -307,14 +307,22 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
       break;
     case 'shooter': {
       // [accuracy, range m, cooldown s, muzzle speed m/s, auto-aim arc ° each
-      // side of centre, slew rad/s]. Reported 2026 flywheel speeds span roughly
-      // 9–23 m/s, so the tiers climb from a rookie single drum to a flat, fast
-      // turret shot. The azimuth axis climbs with them: a fixed mount, then a
-      // short-throw powered gimbal, then the vision turret's wide travel.
-      const specs: Record<string, [number, number, number, number, number, number]> = {
-        'shooter-compact': [0.72, 3.8, 0.7, 9, 0, 0],
-        'shooter-flywheel': [0.9, 5.2, 0.5, 11, 35, 2.2],
-        'shooter-turret': [0.96, 6.4, 0.36, 13, 75, 3.4],
+      // side of centre, slew rad/s, flywheel recovery s, droop per ball].
+      // Reported 2026 flywheel speeds span roughly 9–23 m/s, so the tiers climb
+      // from a rookie single drum to a flat, fast turret shot. Teams measured
+      // roughly 0.3–0.5 s to recover a 500 RPM sag, and a heavier drum with
+      // less current behind it recovers slower — which is why the compact
+      // launcher leads the field.
+      //
+      // The azimuth axis is the fast part of a 2026 robot: a competition turret
+      // turns 180° in about 430–480 ms (≈390°/s) and runs over ±210° of travel,
+      // tracking to ±190° so it never hunts across the wrap. The sim gives the
+      // powered gimbal a short throw at 264°/s and the turret 340° of travel at
+      // 390°/s, which is why a turreted robot can shoot across its own chassis.
+      const specs: Record<string, [number, number, number, number, number, number, number, number]> = {
+        'shooter-compact': [0.72, 3.8, 0.7, 9, 0, 0, 0.95, 0.3],
+        'shooter-flywheel': [0.9, 5.2, 0.5, 11, 45, 4.6, 0.72, 0.22],
+        'shooter-turret': [0.96, 6.4, 0.36, 13, 170, 6.8, 0.55, 0.16],
       };
       const s = specs[partId];
       if (s) {
@@ -327,6 +335,8 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
           turret: s[4] > 0,
           turretArc: (s[4] * Math.PI) / 180,
           turretSlew: s[5],
+          recovery: s[6],
+          droop: s[7],
         };
       } else {
         next.shooter = {
@@ -338,6 +348,8 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
           turret: false,
           turretArc: 0,
           turretSlew: 0,
+          recovery: 1,
+          droop: 0,
         };
       }
       break;
@@ -365,11 +377,23 @@ export function applyPart(config: RobotConfig, partId: string): RobotConfig {
       break;
     }
     case 'sensor': {
+      // §5.4: the HUB carries 36h11 tags, two per face, centres 44.25 in up.
+      // Only the vision suite has a lens; LiDAR aims off odometry and cannot
+      // range a tag, which is why it is the cheaper sensor and the one that
+      // gives up shooting on the move. The lens figures are a Limelight-class
+      // 2026 pipeline: 82° horizontal FOV, 9 m of usable tag range, 45 ms.
       next.sensors = {
         fuelDetector: partId !== 'sensor-lidar',
         wallProximity: partId !== 'sensor-vision',
         autoAlign: partId !== 'sensor-basic',
         colorSensor: partId === 'sensor-vision',
+        camera: {
+          enabled: partId === 'sensor-vision',
+          fov: (82 * Math.PI) / 360,
+          range: 9,
+          latency: 0.045,
+          multiTag: true,
+        },
       };
       break;
     }

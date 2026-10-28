@@ -735,7 +735,9 @@ export function createRobotModel(config: RobotConfig, alliance: 'red' | 'blue'):
       const speed = Math.hypot(state.vx, state.vy);
       wheelAngle += (speed / wheelRadius) * dt;
       for (const wheel of wheels) wheel.rotation.y = wheelAngle;
-      if (drum) drum.rotation.y += (state.carrying > 0 ? 26 : 6) * dt;
+      // The drum runs at the sim's flywheel speed, so a burst visibly sags and
+      // the motors spin it back up.
+      if (drum) drum.rotation.y += (4 + (state.flywheel ?? 1) * 44) * dt;
       // Auto-aim azimuth straight from the sim: the launcher trails the HUB on
       // its own and stops at the edge of its mechanical travel.
       turretGroup.rotation.y = -state.turretYaw;

@@ -18,6 +18,8 @@ function dummyState(config: RobotConfig): RobotSnapshot {
     y: 0,
     heading: 0,
     turretYaw: 0,
+    visionLock: false,
+    flywheel: 1,
     vx: 0,
     vy: 0,
     carrying: config.intake.capacity,

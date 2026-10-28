@@ -1,6 +1,7 @@
 import type { DriverInput, FieldLayout, MatchState, RobotState } from '../types.js';
 import { ALLIANCE_ZONE_DEPTH, getHub, getTower, inAllianceZone } from './field.js';
 import { angleDelta, clamp, normalize } from './math.js';
+import { aimTolerance } from './vision.js';
 
 const IDLE: DriverInput = {
   seq: 0,
@@ -96,18 +97,50 @@ export function computeAIInput(
   // partially inside its ALLIANCE ZONE, so the shooting spot sits between the
   // HUB and the alliance wall rather than out in midfield.
   const inZone = inAllianceZone(field, robot.alliance, robot.x, robot.radius);
+  // Within the launcher's rated range, not 15% past it: beyond the rating the
+  // hood solver has no solution under the flywheel's speed and falls back to a
+  // flat shot that lands short, so those triggers were pure waste.
   const canScore =
-    active && config.shooter.enabled && inZone && distToHub <= config.shooter.range * 1.15;
+    active && config.shooter.enabled && inZone && distToHub <= config.shooter.range;
   // A launcher that swings on its own does not need the chassis squared up: the
   // turret holds the HUB while the robot keeps moving, so the AI only points the
   // chassis at the HUB loosely when it has one.
-  const turret = config.shooter.turret && config.shooter.turretArc > 0;
-  // 2.5 m in from the alliance wall sits comfortably inside the 158.6 in zone
-  // and behind the HUB, which is where a 2026 robot actually shoots from.
+  // Auto-aim needs something behind it: a turret on basic sensors has no way
+  // to find the HUB.
+  const turret = config.shooter.turret && config.shooter.turretArc > 0 && config.sensors.autoAlign;
+  // A flywheel has to be back up to speed before the next ball goes anywhere.
+  const spunUp = robot.flywheel >= 0.94;
+  // Vision cancels the robot's own velocity at launch. Without it a shot taken
+  // while driving drifts by chassis speed times flight time, so the driver has
+  // to settle before firing — the way most 2026 teams actually shot.
+  // Only the AprilTag camera measures chassis velocity; odometry can aim but
+  // cannot see the travel it would have to cancel.
+  const vision = config.sensors.camera.enabled;
+  const shootOnTheMove = vision;
+  // The aperture is 41.7 in across flats, so the window is ±8.6° at 3 m and
+  // ±4.3° at 6 m. Outside it the ball clangs off the rim.
+  const shotWindow = aimTolerance(Math.max(0.8, distToHub - robot.radius));
+  // The aperture is the hard limit, not the trigger point. A launcher has its
+  // own spread on top of the aim error, so a bot that fires the instant the HUB
+  // touches the edge of the window lands about half its shots: the two errors
+  // add. Holding fire until the aim is well inside the window leaves the
+  // mechanism's spread as the thing that decides the miss rate, which is what
+  // makes a 96% turret actually sink 96% of its shots.
+  const onTarget = shotWindow * 0.3;
+  const settled = shootOnTheMove || Math.hypot(robot.vx, robot.vy) <= 0.5;
+  // Do not fire from inside the ring. At 1.5 m the only arc that clears the
+  // 72 in rim is a near-vertical lob, and the ball sails clean over the HUB and
+  // lands three metres behind it — the cluster the shot diagnostic found at
+  // 0.7 m launch range. A robot that has drifted inside the ring backs out
+  // first, which is what a 2026 driver actually does.
+  // Deep in the 158.6 in ALLIANCE ZONE, about 1.4 m off the wall: that puts the
+  // shooting ring ~2.7 m from the HUB, which is where 2026 robots actually
+  // shot from. Parking on the HUB instead forces the solver into an 84° lob,
+  // and a lob that loses 7% of its speed to drum droop lands on the roof.
   const zoneX =
     robot.alliance === 'red'
-      ? ALLIANCE_ZONE_DEPTH * 0.62
-      : field.size.length - ALLIANCE_ZONE_DEPTH * 0.62;
+      ? ALLIANCE_ZONE_DEPTH * 0.34
+      : field.size.length - ALLIANCE_ZONE_DEPTH * 0.34;
   // Hold a shooting ring around that spot rather than creeping into the HUB:
   // inside about a metre the HUB's own wall is between the muzzle and the
   // opening, so a bot that parks on the bumper cannot score at all.
@@ -116,10 +149,21 @@ export function computeAIInput(
     const targetAngle = Math.atan2(hub.y - robot.y, hub.x - robot.x);
     const aimError = angleDelta(robot.heading + robot.turretYaw, targetAngle);
     input.rotate = clamp(angleDelta(robot.heading, targetAngle) * (turret ? 1.3 : 3.2), -1, 1);
-    input.moveY = distToHub > shotRing + 0.45 ? 0.55 : distToHub < shotRing - 0.45 ? -0.35 : 0;
+    // A blind launcher brakes once it is near its ring, not every time it wants
+    // to fire: braking from midfield every tick would leave it crawling and
+    // shooting almost never. A vision launcher keeps driving and firing.
+    const driveY = distToHub > shotRing + 0.45 ? 0.55 : distToHub < shotRing - 0.45 ? -0.35 : 0;
+    // Close in and off target, stop translating and square up. A blind robot
+    // that keeps driving curves around its ring without ever settling, which is
+    // how a bot ends up carrying a full hopper for half the match.
+    const holding = !shootOnTheMove && Math.abs(aimError) > shotWindow * 1.2;
+    input.moveY = holding ? 0 : settled ? driveY : Math.abs(distToHub - shotRing) < 0.55 ? 0 : driveY * 0.8;
     // A fixed launcher follows the chassis, so square up tightly before firing;
-    // a turret just has to have finished swinging onto the HUB.
-    input.actions.shoot = Math.abs(aimError) < (turret ? 0.05 : 0.08);
+    // a turret just has to have finished swinging onto the HUB. Either way the
+    // drum has to be back to setpoint and a blind launcher has to be still.
+    const onRing = distToHub >= shotRing - 0.55;
+    input.actions.shoot =
+      onRing && spunUp && settled && (!vision || robot.visionLock) && Math.abs(aimError) < onTarget;
     input.actions.intake = false;
     return input;
   }
@@ -127,8 +171,12 @@ export function computeAIInput(
     const targetAngle = Math.atan2(hub.y - robot.y, hub.x - robot.x);
     const aimError = angleDelta(robot.heading + robot.turretYaw, targetAngle);
     input.rotate = clamp(angleDelta(robot.heading, targetAngle) * (turret ? 1.3 : 3.2), -1, 1);
-    input.actions.shoot = Math.abs(aimError) < (turret ? 0.05 : 0.1);
-    input.moveY = distToHub > shotRing + 0.5 ? 0.45 : distToHub < shotRing - 0.4 ? -0.3 : 0;
+    const onRing = distToHub >= shotRing - 0.55;
+    input.actions.shoot =
+      onRing && spunUp && settled && (!vision || robot.visionLock) && Math.abs(aimError) < onTarget;
+    const driveY = distToHub > shotRing + 0.5 ? 0.45 : distToHub < shotRing - 0.4 ? -0.3 : 0;
+    const holding = !shootOnTheMove && Math.abs(aimError) > shotWindow * 1.2;
+    input.moveY = holding ? 0 : settled ? driveY : Math.abs(distToHub - shotRing) < 0.5 ? 0 : driveY * 0.8;
     input.actions.intake = false;
     return input;
   }

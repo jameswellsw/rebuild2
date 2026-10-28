@@ -41,10 +41,15 @@ const NEW_ROBOT: RobotConfig = {
   chassis: { length: 0.78, width: 0.6, height: 0.4, mass: 40 },
   stats: { maxSpeed: 4.0, accel: 6.2, turnRate: 2.4, grip: 0.84 },
   intake: { enabled: true, width: 0.55, capacity: 40, speed: 1.8 },
-  shooter: { enabled: true, power: 11, accuracy: 0.9, range: 5.2, cooldown: 0.5, turret: false, turretArc: 0, turretSlew: 0 },
+  shooter: { enabled: true, power: 11, accuracy: 0.9, range: 5.2, cooldown: 0.5, turret: false, turretArc: 0, turretSlew: 0, recovery: 0.72, droop: 0.22 },
   climber: { enabled: true, maxLevel: 1, strength: 1 },
-  arm: { enabled: false, style: 'arm', reach: 0 },
-  sensors: { fuelDetector: true, wallProximity: true, autoAlign: false, colorSensor: false },
+  arm: { enabled: false, style: 'arm', reach: 0 },    sensors: {
+      fuelDetector: true,
+      wallProximity: true,
+      autoAlign: false,
+      colorSensor: false,
+      camera: { enabled: false, fov: (82 * Math.PI) / 360, range: 9, latency: 0.045, multiTag: true },
+    },
   skin: {
     primary: '#c8102e',
     secondary: '#1b2230',
@@ -633,6 +638,29 @@ export function BuilderPage() {
                   {range('Shot cooldown', config.shooter.cooldown, 0.15, 2.5, 0.05, ' s', (value) =>
                     patch((draft) => { draft.shooter.cooldown = value; }),
                   )}
+                  {range('Flywheel recovery', config.shooter.recovery, 0.2, 1.4, 0.05, ' s', (value) =>
+                    patch((draft) => { draft.shooter.recovery = value; }),
+                  )}
+                  {range('Droop per ball', config.shooter.droop * 100, 5, 40, 1, '%', (value) =>
+                    patch((draft) => { draft.shooter.droop = value / 100; }),
+                  )}
+                  <p className="tune-empty">
+                    {config.sensors.camera.enabled
+                      ? 'AprilTag camera: it ranges the HUB for the hood and cancels the robot’s own travel at launch.'
+                      : config.sensors.autoAlign
+                        ? 'Odometry only: the launcher can swing onto the HUB, but it cannot range a tag or score on the move.'
+                        : 'No auto-aim: the chassis has to face the HUB, and a shot taken while driving drifts.'}
+                  </p>
+                  {config.sensors.camera.enabled && (
+                    <>
+                      {range('Camera latency', config.sensors.camera.latency * 1000, 15, 120, 5, ' ms', (value) =>
+                        patch((draft) => { draft.sensors.camera.latency = value / 1000; }),
+                      )}
+                      {range('Tag range', config.sensors.camera.range, 3, 12, 0.5, ' m', (value) =>
+                        patch((draft) => { draft.sensors.camera.range = value; }),
+                      )}
+                    </>
+                  )}
                   {config.shooter.turretArc > 0 ? (
                     <>
                       <p className="tune-empty">
@@ -640,7 +668,7 @@ export function BuilderPage() {
                           ? 'Powered azimuth axis: the launcher follows the HUB inside this arc.'
                           : 'Fixed launcher: the whole robot has to face the HUB to score.'}
                       </p>
-                      {range('Auto-aim arc', (config.shooter.turretArc * 180) / Math.PI, 10, 90, 5, '° each side', (value) =>
+                      {range('Auto-aim arc', (config.shooter.turretArc * 180) / Math.PI, 10, 180, 5, '° each side', (value) =>
                         patch((draft) => { draft.shooter.turretArc = (value * Math.PI) / 180; }),
                       )}
                       {range('Auto-aim slew', config.shooter.turretSlew, 0.5, 6, 0.1, ' rad/s', (value) =>

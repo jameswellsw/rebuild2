@@ -49,6 +49,10 @@ export interface ShooterSpec {
   accuracy: number;
   range: number;
   cooldown: number;
+  /** Seconds for the flywheel to climb back to setpoint after a full droop. */
+  recovery: number;
+  /** Fraction of setpoint a single ball takes out of the flywheel. */
+  droop: number;
   /** Powered azimuth axis: the launcher tracks the HUB by itself. */
   turret: boolean;
   /** Azimuth travel each side of centre, radians. 0 is a fixed mount. */
@@ -69,11 +73,30 @@ export interface ArmSpec {
   reach: number;
 }
 
+/**
+ * An AprilTag camera. §5.4 puts 36h11 tags on all four HUB faces, so a robot
+ * with a lens can range the HUB and measure the chassis velocity its shot is
+ * about to inherit. `fov` is the horizontal half-angle: the Limelight 4's lens
+ * is 82° across, i.e. 0.716 rad each side of centre.
+ */
+export interface CameraSpec {
+  enabled: boolean;
+  fov: number;
+  /** Furthest a HUB tag decodes, metres. */
+  range: number;
+  /** Capture-to-solution latency, seconds. */
+  latency: number;
+  /** Multi-tag solve: one tag alone leaves an ambiguous pose. */
+  multiTag: boolean;
+}
+
 export interface SensorSpec {
   fuelDetector: boolean;
   wallProximity: boolean;
+  /** Can the launcher steer onto the HUB by itself (camera or odometry)? */
   autoAlign: boolean;
   colorSensor: boolean;
+  camera: CameraSpec;
 }
 
 export interface SkinSpec {
@@ -319,6 +342,17 @@ export interface RobotState {
   heading: number;
   /** Where the launcher's auto-aim has driven to, relative to the chassis (rad). */
   turretYaw: number;
+  /**
+   * True when the AprilTag camera has the HUB in frame and in range. A shot
+   * without a lock cannot cancel the robot's own travel, and a powered axis
+   * will not release the ball until it has one.
+   */
+  visionLock: boolean;
+  /**
+   * Flywheel speed as a fraction of setpoint. Each ball takes energy out of the
+   * drum and the motors bring it back over the rated recovery time.
+   */
+  flywheel: number;
   vx: number;
   vy: number;
   radius: number;
@@ -524,6 +558,10 @@ export interface RobotSnapshot {
   heading: number;
   /** Where the launcher's auto-aim has driven to, relative to the chassis (rad). */
   turretYaw: number;
+  /** AprilTag lock for the vision camera view and the ready-to-fire gate. */
+  visionLock: boolean;
+  /** Flywheel speed as a fraction of setpoint, for the spinning drum visual. */
+  flywheel: number;
   vx: number;
   vy: number;
   carrying: number;

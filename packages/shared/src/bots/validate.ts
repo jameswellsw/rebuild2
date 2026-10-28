@@ -97,6 +97,22 @@ export function validateRobot(config: RobotConfig): ValidationResult {
   if (!config.climber.enabled) warnings.push('No climber: this robot gives up TOWER points.');
   if (config.preload > 0 && !config.shooter.enabled) warnings.push('Preloaded FUEL has nowhere to go without a launcher.');
   if (!config.sensors.fuelDetector) warnings.push('Without a fuel detector, auto-alignment and AI pickup are less reliable.');
+  if (config.shooter.turret && config.shooter.turretArc > 0 && !config.sensors.autoAlign) {
+    warnings.push(
+      'The turret has no camera or odometry behind it, so it cannot find the HUB and does nothing. Fit a vision suite or LiDAR.',
+    );
+  }
+  const camera = config.sensors.camera;
+  if (config.shooter.enabled && !camera.enabled) {
+    warnings.push(
+      'No AprilTag camera: the launcher can aim off odometry, but it cannot range the HUB or score while driving.',
+    );
+  }
+  if (camera.enabled && config.shooter.enabled && camera.range < config.shooter.range) {
+    warnings.push(
+      `The camera decodes HUB tags out to ${camera.range.toFixed(1)} m but the launcher is rated to ${config.shooter.range.toFixed(1)} m, so the far end of its range is fired blind.`,
+    );
+  }
 
   return {
     valid: errors.length === 0,
@@ -175,6 +191,8 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
       turret: bool(r.shooter?.turret, base.shooter.turret),
       turretArc: num(r.shooter?.turretArc, base.shooter.turretArc, 0, Math.PI * 0.75),
       turretSlew: num(r.shooter?.turretSlew, base.shooter.turretSlew, 0, 8),
+      recovery: num(r.shooter?.recovery, base.shooter.recovery, 0.1, 1.5),
+      droop: num(r.shooter?.droop, base.shooter.droop, 0.02, 0.4),
     },
     climber: {
       enabled: bool(r.climber?.enabled, base.climber.enabled),
@@ -191,6 +209,13 @@ export function normalizeRobotConfig(raw: unknown, fallbackId = 'custom'): Robot
       wallProximity: bool(r.sensors?.wallProximity, base.sensors.wallProximity),
       autoAlign: bool(r.sensors?.autoAlign, base.sensors.autoAlign),
       colorSensor: bool(r.sensors?.colorSensor, base.sensors.colorSensor),
+      camera: {
+        enabled: bool(r.sensors?.camera?.enabled, base.sensors.camera.enabled),
+        fov: num(r.sensors?.camera?.fov, base.sensors.camera.fov, 0.2, 1.4),
+        range: num(r.sensors?.camera?.range, base.sensors.camera.range, 2, 20),
+        latency: num(r.sensors?.camera?.latency, base.sensors.camera.latency, 0, 0.2),
+        multiTag: bool(r.sensors?.camera?.multiTag, base.sensors.camera.multiTag),
+      },
     },
     skin: {
       primary: str(skin.primary, base.skin.primary, 9),

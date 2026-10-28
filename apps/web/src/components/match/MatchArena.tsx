@@ -9,6 +9,7 @@ import type {
   RefCommand,
   RoomRole,
 } from '@rebuilt/shared';
+import { aimTolerance } from '@rebuilt/shared';
 import { Icon } from '../Icon';
 import { Logo } from '../Logo';
 import type { CameraMode } from '../../three/fieldScene';
@@ -22,6 +23,7 @@ import { ResultsOverlay } from './ResultsOverlay';
 
 const CAMERAS: Array<{ id: CameraMode; label: string }> = [
   { id: 'driver', label: 'Driver' },
+  { id: 'vision', label: 'Vision' },
   { id: 'broadcast', label: 'Broadcast' },
   { id: 'field', label: 'Top' },
   { id: 'orbit', label: 'Orbit' },
@@ -109,6 +111,19 @@ export function MatchArena({
     return robots[focusIndex % Math.max(1, robots.length)]?.id;
   }, [controlled, focusIndex, setup.robots]);
   const playerRobotId = controlled?.setup.id;
+  // Vision camera readout: whose lens we are looking through, what it sees and
+  // how tight the aperture's yaw window is from where the robot is standing.
+  const visionRobot = snapshot.robots.find((robot) => robot.id === focusRobot);
+  const visionSetup = setup.robots.find((robot) => robot.id === focusRobot);
+  const visionHub = visionSetup
+    ? setup.field.hubs.find((hub) => hub.alliance === visionSetup.alliance)
+    : undefined;
+  const visionRange =
+    visionRobot && visionHub
+      ? Math.hypot(visionRobot.x - visionHub.x, visionRobot.y - visionHub.y)
+      : 0;
+  const visionWindow = visionRange > 0 ? (aimTolerance(visionRange) * 180) / Math.PI : 0;
+  const visionCameraFitted = Boolean(visionSetup?.bot.sensors.camera.enabled);
 
   useEffect(() => {
     setCameraMode(controlled ? 'driver' : 'broadcast');
@@ -153,6 +168,29 @@ export function MatchArena({
         quality={controlled ? 'high' : 'balanced'}
       />
       <div className="match-vignette" aria-hidden />
+
+      {cameraMode === 'vision' && visionRobot && visionSetup && !finished && (
+        <div className={`vision-hud ${visionRobot.visionLock ? 'locked' : 'searching'}`}>
+          <div className="vision-reticle" aria-hidden>
+            <span className="vision-corner tl" />
+            <span className="vision-corner tr" />
+            <span className="vision-corner bl" />
+            <span className="vision-corner br" />
+            <span className="vision-cross" />
+          </div>
+          <div className="vision-readout">
+            <span className="vision-label">
+              VISION · {visionCameraFitted ? (visionRobot.visionLock ? 'TAG LOCK' : 'NO TAG') : 'NO CAMERA'}
+            </span>
+            <strong>{visionCameraFitted ? `${visionRange.toFixed(1)} m` : 'FIT A VISION SUITE'}</strong>
+            <span>
+              {visionCameraFitted
+                ? `±${visionWindow.toFixed(1)}° aperture · flywheel ${Math.round(visionRobot.flywheel * 100)}%`
+                : 'Odometry aim only: no tag range, no shot on the move'}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="match-top">
         <div className="match-top-left">

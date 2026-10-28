@@ -191,7 +191,7 @@ ready` and room creation is unavailable there.
 
 The same deterministic engine runs in the browser and on the room server at a fixed 60 Hz.
 
-- **Shooting.** Each shot picks the flattest hood (52°–84°) that both clears the HUB's 72 in
+- **Shooting.** Each shot picks the flattest hood (30°–84°) that both clears the HUB's 72 in
   front panel and drops through the opening, then spins the flywheel to the matching muzzle speed —
   capped by the robot's rated `power`. Aim is the muzzle heading: a fixed launcher throws wherever
   the chassis points, so squaring up is the skill. A launcher on a powered azimuth axis auto-aims
@@ -199,6 +199,38 @@ The same deterministic engine runs in the browser and on the room server at a fi
   ±75° for the vision turret) and clamps at its stops when the HUB falls outside it, so a turreted
   robot can score while the chassis is still rotating but cannot shoot behind itself. Shots past
   the flywheel's reach fall short, and point-blank shots turn into steep lobs.
+- **The flywheel sags.** Exit speed is the drum's actual speed, not its rating: every ball takes
+  `droop` off the flywheel and the motors put it back over the rated `recovery`, so a burst faster
+  than the mechanism can recover throws progressively shorter — the limit real teams hit, where a
+  shot drops the wheel about 500 RPM and it takes 0.3–0.5 s to come back. The feeder indexes one
+  ball per cycle and waits for the drum, like a real indexer: firing a pair into a single tick put
+  the second ball on a drum the first had already dragged 16% down, and half of every robot's shots
+  fell short. Reported 2026 exit speeds run roughly 9–23 m/s, about 90% of
+  wheel surface speed, which is why the parts are rated in muzzle speed rather than motor RPM.
+- **Shooting on the move.** The ball leaves with the chassis velocity added to it. A vision suite
+  measures that velocity and subtracts it at launch, solving the lead in field coordinates, so a
+  vision robot scores while driving; a launcher without vision drifts by chassis speed × flight
+  time — a 2 m/s strafe misses the 41.7 in opening by roughly 0.75 m at 3 m — so an AI driver with
+  no vision settles before firing, exactly as most 2026 teams did.
+- **The camera is the aim.** Auto-aim needs a measurement: an AprilTag camera (82° horizontal FOV,
+  9 m of tag range, 45 ms latency) or odometry from the LiDAR. Only the camera can range the HUB
+  for the hood and cancel the chassis velocity a shot inherits, so a LiDAR robot can swing onto the
+  HUB but cannot score on the move, and a turret with basic sensors cannot track at all. The turret
+  closes its loop on the pose the frame was *captured* from, so a chassis turning at 3 rad/s aims
+  about 7.7° behind the HUB — the undershoot teams tune phase delay to remove — and the lens only
+  sees tags inside the launcher's own arc and range.
+- **The aperture is a hexagon.** The HUB opening is 41.7 in across flats with a 5.91 in ball in it,
+  which leaves 0.455 m of side margin: ±8.6° of yaw at 3 m, ±4.3° at 6 m. The AI holds its fire
+  outside that window — the discipline Team 604's one-button scorer encoded — and the scoring test
+  is against the flats rather than the hexagon's circumcircle, so long shots are harder than close
+  ones. A launcher's own spread is sized to that window, so the part card's accuracy is the share of
+  shots that land — 96% for the vision turret, 90% for the dual flywheel, 72% for the compact drum
+  — rather than an arbitrary angle that every launcher missed about equally often. The AI also
+  shoots from about 2.7 m rather than parked on the HUB: inside that ring the only arc that clears
+  the 72 in rim is a near-vertical lob, and the ball sails clean over the structure.
+- **Turrets are fast.** A competition 2026 turret turns 180° in 430–480 ms — about 390°/s — over
+  ±210° of travel. The sim's vision turret runs 340° of travel at 390°/s, which is why a turreted
+  robot can shoot across its own chassis instead of turning to face the HUB.
 - **FUEL.** Every loose ball is a 0.15 m, 0.21 kg body: ball-to-ball contacts on a spatial grid,
   bumper pushes, intake suction, gravity down the BUMP ramps, bounces off the 20 in guardrail and
   the HUB panels, and a support surface (carpet, ramp, HUB roof, TRENCH roof). Corral FUEL sleeps

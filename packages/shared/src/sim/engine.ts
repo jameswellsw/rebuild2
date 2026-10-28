@@ -39,7 +39,8 @@ import {
   startingSpot,
   towerDistance,
 } from './field.js';
-import { Rng, clamp, circleRectOverlap, round } from './math.js';
+import { Rng, angleDelta, clamp, circleRectOverlap, round } from './math.js';
+import { aimTolerance, apertureInradius, cameraSeesHub, insideHubOpening } from './vision.js';
 
 export const FIXED_DT = 1 / 60;
 /** Official FUEL is a 5.91 in (0.150 m) foam ball, per the 2026 manual. */
@@ -205,6 +206,15 @@ export class MatchEngine {
     newDamage: [],
   };
   private sinkCache: RuleSink | null = null;
+  /**
+   * Pose history per robot. A camera solves from a frame that is already
+   * `latency` old, so the turret reads the pose the image was taken from, not
+   * the one the chassis is in by the time the answer arrives.
+   */
+  private readonly visionHistory = new Map<
+    string,
+    Array<{ t: number; x: number; y: number; heading: number }>
+  >();
 
   constructor(setup: MatchSetup, options: EngineOptions = {}) {
     this.game = options.game ?? DEFAULT_GAME;
@@ -261,6 +271,11 @@ export class MatchEngine {
         y: spot.y,
         heading: spot.heading,
         turretYaw: 0,
+        visionLock: false,
+        // Teams spin their flywheel up in the queue and during the countdown,
+        // so a launcher is at setpoint when the match starts. What bites after
+        // that is the sag from its own shots, not a cold-start ramp.
+        flywheel: 1,
         vx: 0,
         vy: 0,
         radius,
@@ -658,26 +673,96 @@ export class MatchEngine {
    * offset and fires wherever the chassis points, a turret keeps the shot on
    * target while the driver is still rotating, and clamps at its stops when the
    * HUB falls outside the arc — the same failure a real turret has.
+   *
+   * The tracking loop closes on the camera, and a camera answer is one frame
+   * old: 45 ms on a 2026 pipeline. That is the ω·latency undershoot teams chase
+   * with phase-delay tuning, so a turret turning at 3 rad/s aims about 7.7°
+   * behind the HUB until the chassis stops rotating.
    */
   private updateTurrets(dt: number): void {
     for (const robot of this.state.robots) {
-      const spec = this.botById.get(robot.id)?.shooter;
-      if (!spec?.turret || spec.turretArc <= 0 || robot.disabled || robot.tipped || robot.disqualified) {
+      const bot = this.botById.get(robot.id);
+      const spec = bot?.shooter;
+      const sensors = bot?.sensors;
+      const hub = getHub(this.field, robot.alliance);
+      // A turret-mounted lens looks wherever the launcher points, and a fixed
+      // one down the chassis; either way the tag has to be in frame and inside
+      // the camera's range. No camera means the robot is aiming off odometry,
+      // which has no lens to lose.
+      robot.visionLock = cameraSeesHub(
+        sensors?.camera,
+        robot.x,
+        robot.y,
+        robot.heading,
+        robot.turretYaw,
+        hub,
+      );
+      if (
+        !spec?.turret ||
+        spec.turretArc <= 0 ||
+        !sensors?.autoAlign ||
+        robot.disabled ||
+        robot.tipped ||
+        robot.disqualified
+      ) {
         robot.turretYaw = 0;
         continue;
       }
-      const hub = getHub(this.field, robot.alliance);
-      const desired = Math.atan2(hub.y - robot.y, hub.x - robot.x);
-      // Shortest way round, then clamped to the mechanism's travel.
-      const rel = Math.atan2(Math.sin(desired - robot.heading), Math.cos(desired - robot.heading));
-      const want = clamp(rel, -spec.turretArc, spec.turretArc);
+      const pose = this.visionPose(robot, sensors.camera.latency);
+      const desired = Math.atan2(hub.y - pose.y, hub.x - pose.x);
+      // Shortest way round from today's chassis heading, then clamped to the
+      // mechanism's travel.
+      const want = clamp(angleDelta(robot.heading, desired), -spec.turretArc, spec.turretArc);
       const step = Math.max(0.2, spec.turretSlew) * dt;
       robot.turretYaw += clamp(want - robot.turretYaw, -step, step);
     }
   }
 
+  /** Record where each robot is, so the camera can report an older frame. */
+  private recordVision(): void {
+    for (const robot of this.state.robots) {
+      let history = this.visionHistory.get(robot.id);
+      if (!history) {
+        history = [];
+        this.visionHistory.set(robot.id, history);
+      }
+      history.push({ t: this.state.time, x: robot.x, y: robot.y, heading: robot.heading });
+      // A 0.4 s window covers even the slowest pipeline without growing.
+      while (history.length > 2 && history[0].t < this.state.time - 0.4) history.shift();
+    }
+  }
+
+  /** The pose the camera's latest solution was captured from. */
+  private visionPose(robot: RobotState, latency: number): { x: number; y: number } {
+    if (latency <= 0) return robot;
+    const history = this.visionHistory.get(robot.id);
+    if (!history?.length) return robot;
+    const want = this.state.time - latency;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].t <= want + 1e-6) return history[i];
+    }
+    return history[0];
+  }
+
+  /**
+   * Flywheel recovery. Every ball pulls the drum down by its droop and the
+   * motors bring it back to setpoint over the rated recovery time, so a burst
+   * faster than the mechanism can keep up with throws progressively shorter —
+   * the same limit a real 2026 shooter has, where the feeder is rarely the
+   * bottleneck.
+   */
+  private updateFlywheels(dt: number): void {
+    for (const robot of this.state.robots) {
+      const spec = this.botById.get(robot.id)?.shooter;
+      if (!spec?.enabled || robot.flywheel >= 1) continue;
+      robot.flywheel = Math.min(1, robot.flywheel + dt / Math.max(0.08, spec.recovery));
+    }
+  }
+
   private moveRobots(dt: number): void {
+    this.recordVision();
     this.updateTurrets(dt);
+    this.updateFlywheels(dt);
     for (const robot of this.state.robots) {
       const setup = this.setupById.get(robot.id);
       if (!setup) continue;
@@ -965,12 +1050,12 @@ export class MatchEngine {
 
       if (input.actions.shoot && setup.bot.shooter.enabled && robot.carrying > 0 && !robot.climb.active) {
         if (this.state.time - robot.lastShotAt >= setup.bot.shooter.cooldown) {
-          const shots = Math.min(robot.carrying, 2);
-          for (let i = 0; i < shots; i++) {
-            // A pair leaves side by side instead of from the same point, so the
-            // two balls do not spawn inside each other and scatter.
-            this.shootFuel(robot, setup.bot, shots === 2 ? (i === 0 ? -0.085 : 0.085) : 0);
-          }
+          // One FUEL per feed cycle. A real indexer puts a single ball into the
+          // drum and waits for the RPM gate before the next one. Firing a pair
+          // in the same tick meant the second ball always left a drum the first
+          // had just dragged down, so half of every robot's shots fell short.
+          this.shootFuel(robot, setup.bot);
+          robot.flywheel = clamp(robot.flywheel - clamp(setup.bot.shooter.droop, 0, 0.5), 0.2, 1);
           robot.lastShotAt = this.state.time;
         }
       }
@@ -1047,12 +1132,35 @@ export class MatchEngine {
    * its auto-aim has reached, which is why a turreted robot can score with the
    * chassis still turning.
    */
-  private shootFuel(robot: RobotState, bot: MatchSetup['robots'][number]['bot'], side = 0): void {
+  private shootFuel(robot: RobotState, bot: MatchSetup['robots'][number]['bot']): void {
     const hub = getHub(this.field, robot.alliance);
     const accuracy = clamp(bot.shooter.accuracy, 0, 1);
     // Where the muzzle is actually pointing, auto-aim included.
     const aim = robot.heading + robot.turretYaw;
-    const yaw = aim + this.rng.range(-(1 - accuracy) * 0.55, (1 - accuracy) * 0.55);
+    // Flywheel speed is not a constant: a drum that has just given a ball its
+    // energy throws the next one slower until the motors bring it back, and the
+    // exit speed falls with it. That sag is what limits a real burst.
+    const spin = clamp(robot.flywheel, 0, 1);
+    const rated = clamp(bot.shooter.power, 3, 14);
+    // The hood solves for a drum at setpoint. A drum that is down on speed puts
+    // less speed on the ball than the hood expects, so the arc falls short —
+    // which is how a real flywheel loses the shot, not by politely aiming high.
+    const sag = 0.55 + 0.45 * spin;
+    // The ball leaves with the chassis velocity added to it. A vision suite
+    // measures that velocity and subtracts it again at launch, so the shot
+    // still lands while the robot is driving; without vision the ball drifts by
+    // roughly chassis speed times flight time, which is why a blind launcher
+    // has to stop and square up.
+    // Only the AprilTag camera measures the chassis velocity the ball is about
+    // to inherit. Odometry can aim, but it cannot see motion to cancel it. The
+    // lock is recomputed here so a shot never depends on the order the step
+    // happens to run in.
+    const camera = bot.sensors.camera;
+    const vision = Boolean(
+      camera?.enabled &&
+        (robot.visionLock ||
+          cameraSeesHub(camera, robot.x, robot.y, robot.heading, robot.turretYaw, hub)),
+    );
     // Range is measured along the muzzle heading, from the muzzle to the HUB
     // opening: this is the number a real robot's distance sensor feeds its hood.
     // A fixed launcher facing away has no usable range at all. Aiming at the
@@ -1063,16 +1171,25 @@ export class MatchEngine {
     const toHubX = hub.x - robot.x;
     const toHubY = hub.y - robot.y;
     const range = toHubX * Math.cos(aim) + toHubY * Math.sin(aim) - start;
+    // How far off the muzzle heading a ball can leave and still fit through the
+    // 41.7 in hexagon: ±8.6° at 3 m, ±4.3° at 6 m. At this range the aperture
+    // is effectively linear in angle, so a uniform jitter of ±window/accuracy
+    // misses the opening exactly (1 − accuracy) of the time: 96% turret, 90%
+    // dual flywheel, 72% compact, which is what the part cards advertise.
+    const window = aimTolerance(Math.max(0.7, range));
+    const jitter = window / Math.max(0.4, accuracy);
+    const yaw = aim + this.rng.range(-jitter, jitter);
     const rise = this.game.hub.rimHeight + 0.1 - SHOT_HEIGHT;
     const launch = this.launchFor(
       range,
       rise,
-      // Distance from the muzzle to the HUB's near panel, which the arc has to
-      // clear before it can drop into the opening.
-      range - hub.width / 2,
-      clamp(bot.shooter.power, 3, 14),
+      // Distance from the muzzle to the near edge of the opening: the hexagon's
+      // inradius, not its 47 in bounding box, so the arc is checked where the
+      // near panel actually is rather than 6 cm past it.
+      range - apertureInradius(this.game.hub.openingRadius),
+      rated,
     );
-    const speed = launch.speed;
+    const speed = launch.speed * sag;
     // Accuracy also jitters the hood a little, so marginal shots rattle in and
     // out of the funnel instead of all landing identically.
     const angle = clamp(
@@ -1081,15 +1198,26 @@ export class MatchEngine {
       HOOD_MAX,
     );
     const groundSpeed = Math.cos(angle) * speed;
+    // The solved velocity is what the ball needs in field coordinates. Vision
+    // trims the shot to deliver exactly that — it measures the robot's velocity
+    // and cancels it at launch, so the ball leaves on the solved line while the
+    // chassis keeps driving. A launcher with no vision cannot do that, so the
+    // ball simply carries the chassis velocity with it and drifts by roughly
+    // chassis speed times flight time: the drift is that inherited velocity,
+    // not a second helping of random aim error.
+    let shotVx = Math.cos(yaw) * groundSpeed;
+    let shotVy = Math.sin(yaw) * groundSpeed;
+    if (!vision) {
+      shotVx += robot.vx;
+      shotVy += robot.vy;
+    }
     const fuel = this.takeCarried(robot);
     Object.assign(fuel, {
-      x: robot.x + Math.cos(yaw) * start - Math.sin(yaw) * side,
-      y: robot.y + Math.sin(yaw) * start + Math.cos(yaw) * side,
+      x: robot.x + Math.cos(yaw) * start,
+      y: robot.y + Math.sin(yaw) * start,
       z: SHOT_HEIGHT,
-      // A shot taken while driving carries the chassis momentum with it, which
-      // is why real robots stop to shoot.
-      vx: Math.cos(yaw) * groundSpeed + robot.vx * 0.45,
-      vy: Math.sin(yaw) * groundSpeed + robot.vy * 0.45,
+      vx: shotVx,
+      vy: shotVy,
       vz: Math.sin(angle) * speed,
       state: 'flight',
       shotBy: robot.id,
@@ -1120,7 +1248,10 @@ export class MatchEngine {
     // No usable range ahead (the driver is facing away from the HUB): this is a
     // dump off the front, not a shot, so it lands a couple of metres away.
     if (range <= 0.25) return { speed: Math.max(3, maxSpeed * 0.45), angle: 0.5 };
-    for (let degrees = 52; degrees <= 84; degrees += 2) {
+    // A 2026 hood sits around 20–45° at close range, so the sweep starts flat
+    // rather than at 52°, which is the angle a lob starts to look like. The
+    // first (flattest) solution that satisfies both constraints wins.
+    for (let degrees = 30; degrees <= 84; degrees += 2) {
       const angle = (degrees * Math.PI) / 180;
       const tan = Math.tan(angle);
       const reach = range * tan - rise;
@@ -1247,7 +1378,7 @@ export class MatchEngine {
     if (rim <= bottom + 0.03) {
       for (const hub of this.field.hubs) {
         if (Math.abs(x - hub.x) > hub.width / 2 || Math.abs(y - hub.y) > hub.depth / 2) continue;
-        if (Math.hypot(x - hub.x, y - hub.y) <= this.game.hub.openingRadius) continue;
+        if (insideHubOpening(x - hub.x, y - hub.y, this.game.hub.openingRadius, BALL_RADIUS * 0.5)) continue;
         support = Math.max(support, rim);
       }
     }
@@ -1524,7 +1655,9 @@ export class MatchEngine {
     for (const hub of this.field.hubs) {
       const dx = fuel.x - hub.x;
       const dy = fuel.y - hub.y;
-      const inside = Math.hypot(dx, dy) <= this.game.hub.openingRadius + BALL_RADIUS * 0.5;
+      // §5.4: the opening is a 41.7 in hexagon, so the ball has to clear the
+      // flats rather than a circle of the hexagon's circumradius.
+      const inside = insideHubOpening(dx, dy, this.game.hub.openingRadius, BALL_RADIUS * 0.5);
       if (!inside) continue;
       if (shooter && shooter.alliance !== hub.alliance) {
         // Wrong HUB: bounce out, no score.
@@ -2366,6 +2499,8 @@ export class MatchEngine {
         y: round(r.y, 3),
         heading: round(r.heading, 3),
         turretYaw: round(r.turretYaw, 3),
+        visionLock: r.visionLock,
+        flywheel: round(r.flywheel, 3),
         vx: round(r.vx, 2),
         vy: round(r.vy, 2),
         carrying: r.carrying,

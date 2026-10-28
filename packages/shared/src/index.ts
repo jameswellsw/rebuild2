@@ -4,6 +4,7 @@ export * from './bots/parts.js';
 export * from './bots/presets.js';
 export * from './bots/validate.js';
 export * from './sim/math.js';
+export * from './sim/vision.js';
 export * from './sim/field.js';
 export * from './sim/engine.js';
 export * from './sim/ai.js';

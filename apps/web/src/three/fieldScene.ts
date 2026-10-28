@@ -29,7 +29,7 @@ import {
   makeVenueFloorTexture,
 } from './textures';
 
-export type CameraMode = 'driver' | 'broadcast' | 'field' | 'orbit';
+export type CameraMode = 'driver' | 'vision' | 'broadcast' | 'field' | 'orbit';
 
 export interface FieldSceneOptions {
   field: FieldLayout;
@@ -2066,6 +2066,8 @@ export class FieldScene {
         y: spot.y,
         heading: spot.heading,
         turretYaw: 0,
+        visionLock: false,
+        flywheel: 1,
         vx: 0,
         vy: 0,
         carrying: 0,
@@ -2311,7 +2313,10 @@ export class FieldScene {
     const look = this.tmpLook;
     const direction = this.tmpDirection;
     const field = this.field.size;
-    const mode = this.cameraMode === 'driver' && !this.focusRobotId ? 'broadcast' : this.cameraMode;
+    const mode =
+      (this.cameraMode === 'driver' || this.cameraMode === 'vision') && !this.focusRobotId
+        ? 'broadcast'
+        : this.cameraMode;
     const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
     // A narrower lens than a first-person game: it pushes the camera back so
     // the arena reads with broadcast perspective instead of wide-angle bend.
@@ -2338,6 +2343,28 @@ export class FieldScene {
         // HUBs and the TOWER are tall enough to sit between lens and robot.
         this.clearChase(target, look);
         desiredFov = 60;
+        chase = true;
+      }
+    }
+    if (!chase && mode === 'vision' && this.focusRobotId) {
+      const robot = this.robots.get(this.focusRobotId);
+      if (robot) {
+        const setup = this.setup.robots.find((r) => r.id === this.focusRobotId);
+        // The lens's real 82° horizontal field, so the frame is what the
+        // AprilTag pipeline sees rather than a game camera's wide-angle view.
+        const hFov = (setup?.bot.sensors.camera.fov ?? 0.7156) * 2;
+        const aspect = Math.max(0.5, this.camera.aspect);
+        const aim = robot.target.heading + robot.target.turretYaw;
+        const forward = this.tmpForward.set(Math.cos(aim), 0, Math.sin(aim));
+        const pos = robot.visual.group.position;
+        // Mounted on the launcher, just past the bumper: the HUB opening sits
+        // 72 in up, so the view runs flat upfield, not down at the carpet.
+        target.copy(pos).addScaledVector(forward, 0.34).add(this.tmpOffset.set(0, 0.72, 0));
+        look.copy(target).addScaledVector(forward, 10).add(this.tmpOffset.set(0, 0.42, 0));
+        desiredFov = Math.min(
+          110,
+          Math.max(20, (Math.atan(Math.tan(hFov / 2) / aspect) * 2 * 180) / Math.PI),
+        );
         chase = true;
       }
     }
@@ -2391,7 +2418,7 @@ export class FieldScene {
     }
     // The lighting rig is only drawn for the driver camera: from the wide
     // cameras it sits between the lens and the carpet.
-    if (mode === 'driver') this.camera.layers.enable(1);
+    if (mode === 'driver' || mode === 'vision') this.camera.layers.enable(1);
     else this.camera.layers.disable(1);
     // Name plates are only useful when the camera is close to a robot; from
     // the broadcast and top cameras they read as floating banners.
@@ -2402,7 +2429,10 @@ export class FieldScene {
       robot.label.visible =
         mode === 'driver' && robot.target.id !== this.focusRobotId && distance > 5.5 && distance < 22;
     }
-    const smoothing = immediate ? 1 : 1 - Math.exp(-(mode === 'driver' ? 9 : 5.5) * dt);
+    // The vision camera rides a turret that can turn 390°/s, so it snaps harder
+    // than the chase camera; a soft follow would smear the whole HUB.
+    const follow = mode === 'vision' ? 16 : mode === 'driver' ? 9 : 5.5;
+    const smoothing = immediate ? 1 : 1 - Math.exp(-follow * dt);
     this.camera.position.lerp(target, smoothing);
     this.cameraLook.lerp(look, smoothing);
     this.camera.lookAt(this.cameraLook);

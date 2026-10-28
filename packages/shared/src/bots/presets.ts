@@ -11,10 +11,16 @@ export function createDefaultConfig(): RobotConfig {
     chassis: { length: 0.686, width: 0.686, height: 0.42, mass: 10 },
     stats: { maxSpeed: 4.6, accel: 8.4, turnRate: 3.6, grip: 0.9 },
     intake: { enabled: true, width: 0.62, capacity: 40, speed: 1.8 },
-    shooter: { enabled: true, power: 11, accuracy: 0.9, range: 5.2, cooldown: 0.5, turret: false, turretArc: 0, turretSlew: 0 },
+    shooter: { enabled: true, power: 11, accuracy: 0.9, range: 5.2, cooldown: 0.5, turret: false, turretArc: 0, turretSlew: 0, recovery: 0.72, droop: 0.22 },
     climber: { enabled: true, maxLevel: 1, strength: 1 },
     arm: { enabled: false, reach: 0, style: 'arm' },
-    sensors: { fuelDetector: true, wallProximity: false, autoAlign: false, colorSensor: false },
+    sensors: {
+      fuelDetector: true,
+      wallProximity: false,
+      autoAlign: false,
+      colorSensor: false,
+      camera: { enabled: false, fov: (82 * Math.PI) / 360, range: 9, latency: 0.045, multiTag: true },
+    },
     skin: {
       primary: '#c8102e',
       secondary: '#1b1f2a',
@@ -164,7 +170,9 @@ export const PRESET_BOTS: BotRecord[] = [
       'shooter-flywheel',
       'climber-winched',
       'arm-none',
-      'sensor-lidar',
+      // A gimballed launcher needs a lens behind it: without one it can swing
+      // onto the HUB from odometry but cannot range it or shoot on the move.
+      'sensor-vision',
     ],
     preload: 5,
     skin: { primary: '#0c6b8a', secondary: '#d7f7ff', accent: '#2de0c5', pattern: 'hex', numberColor: '#ffffff' },

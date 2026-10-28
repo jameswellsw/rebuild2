@@ -119,8 +119,14 @@ describe('REBUILT match simulation', () => {
     expect(engine.state.fuel.some((f) => f.releasedByHub === 'red')).toBe(true);
   });
 
-  it('misses the HUB when the robot is not facing it', () => {
-    const engine = makeEngine();
+  it('misses the HUB when a fixed launcher is not facing it', () => {
+    // Strip the azimuth axis: a turreted robot would simply swing onto the HUB
+    // from here, which is a different behaviour (covered above).
+    const setup = makeSetup();
+    setup.robots[0].bot.shooter.turret = false;
+    setup.robots[0].bot.shooter.turretArc = 0;
+    setup.robots[0].bot.sensors.camera.enabled = false;
+    const engine = makeEngine(setup);
     const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
     const hub = getHub(REBUILT_FIELD, 'red');
     red.x = hub.x - 2.4;
@@ -439,6 +445,55 @@ describe('REBUILT match simulation', () => {
     expect(blueOverhang).toBeLessThanOrEqual(0);
     // The routine still does its job: the AI shoots its preload in AUTO.
     expect(engine.state.scores.red.autoFuel + engine.state.scores.blue.autoFuel).toBeGreaterThan(0);
+  });
+
+  it('sags the flywheel on every ball and recovers between bursts', () => {
+    const engine = makeEngine();
+    const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+    const hub = getHub(REBUILT_FIELD, 'red');
+    red.x = hub.x - 2.6;
+    red.y = hub.y;
+    red.heading = Math.atan2(hub.y - red.y, hub.x - red.x);
+    engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
+    engine.step(1 / 60);
+    const inFlight = engine.state.fuel.filter((f) => f.shotBy === 'red-bot' && f.state === 'flight');
+    // One ball per feed cycle: the indexer waits for the drum, so a pair can no
+    // longer leave in the same tick with the second one already short.
+    expect(inFlight.length).toBe(1);
+    expect(red.flywheel).toBeLessThan(0.9);
+    // The motors bring it back to setpoint over the rated recovery time.
+    advance(engine, 0.6);
+    expect(red.flywheel).toBeGreaterThan(0.95);
+  });
+
+  it('lands a shot on the move with vision, and drifts without it', () => {
+    const scoreMoving = (vision: boolean): number => {
+      const setup = makeSetup();
+      const bot = setup.robots[0].bot;
+      bot.preload = 1;
+      bot.sensors.autoAlign = vision;
+      // The lens is what measures chassis velocity: take it off the blind robot
+      // as well as the auto-align flag, or the comparison is meaningless.
+      bot.sensors.camera.enabled = vision;
+      bot.shooter.accuracy = 1;
+      bot.shooter.turret = false;
+      bot.shooter.turretArc = 0;
+      const engine = makeEngine(setup);
+      const red = engine.state.robots.find((r) => r.id === 'red-bot')!;
+      const hub = getHub(REBUILT_FIELD, 'red');
+      red.x = hub.x - 2.4;
+      red.y = hub.y;
+      red.heading = Math.atan2(hub.y - red.y, hub.x - red.x);
+      // Crossing in front of the HUB at 2 m/s: the ball inherits that velocity
+      // unless the launcher measures it and takes it back out.
+      red.vy = 2;
+      engine.setInput('red-bot', input({ actions: { ...input().actions, shoot: true } }));
+      advance(engine, 1.4);
+      const score = engine.state.scores.red;
+      return score.autoFuel + score.teleopFuel;
+    };
+    expect(scoreMoving(true)).toBe(1);
+    expect(scoreMoving(false)).toBe(0);
   });
 
   it('produces a valid bot roster under construction limits', () => {
